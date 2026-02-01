@@ -1,0 +1,9 @@
+*.o
+*.obj
+*.map
+*.sym
+*.lis
+*.bin
+zmc.com
+ZMC.COM
+.DS_Store
