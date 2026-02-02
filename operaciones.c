@@ -1,3 +1,21 @@
+/*
+Z80 Management Commander (ZMC)
+Copyright (C) 2026 Volney Torres
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+*/
 #include <stdio.h>
 #include <string.h>
 #include <cpm.h>
@@ -181,8 +199,8 @@ void view_file(Panel *p) {
                     putchar('\r'); // Retorno de carro para CP/M
                     line_count++;
                     
-                    // Pausa cuando se llena la pantalla (aprox 28 líneas)
-                    if (line_count >= 28) { 
+                    // Pausa cuando se llena la pantalla (aprox VISIBLE_ROWS líneas)
+                    if (line_count >= VISIBLE_ROWS) { 
                         printf("\x1b[7m -- MAS (ESC:Salir) -- \x1b[0m");
                         
                         unsigned char k = wait_key_hw();
@@ -250,7 +268,7 @@ void dump_file(Panel *p) {
                 address += 16;
                 line_count++;
 
-                if (line_count >= 28) {
+                if (line_count >= VISIBLE_ROWS) {
                     printf("\x1b[7m -- MAS (ESC:Salir) -- \x1b[0m");
                     if (wait_key_hw() == 27) goto end_dump;
                     printf("\r                       \r");
