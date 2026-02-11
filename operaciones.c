@@ -21,6 +21,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 #include <cpm.h>
 #include "zmc.h"
 
+extern uint8_t *LINES;
+extern uint8_t *COLUMNS;
+
 /* Estructura de un registro de directorio de CP/M (32 bytes) */
 struct cpm_dir {
     unsigned char drive;
@@ -32,6 +35,7 @@ struct cpm_dir {
     unsigned char map[16];
 };
 
+
 void load_directory(Panel *p) {
     struct cpm_dir *dir_entry;
     unsigned char fcb[36];
@@ -42,6 +46,8 @@ void load_directory(Panel *p) {
     p->current_idx = 0;
     p->scroll_offset = 0;
 
+    if (p->drive == '@') // select current drive
+        p->drive = bdos( 25, fcb ) + 'A';
     /* 1. Cambiar a la unidad deseada antes de buscar */
     bdos(14, p->drive - 'A'); 
 
@@ -61,7 +67,7 @@ void load_directory(Panel *p) {
         /* Solo procesar si no es un archivo borrado (0xE5) */
         if (dir_entry->drive != 0xE5) {
             char clean_name[9], clean_ext[4];
-            
+
             // Limpiar nombre (quitar bits de atributos y espacios)
             for(int i=0; i<8; i++) clean_name[i] = dir_entry->name[i] & 0x7F;
             clean_name[8] = '\0';
@@ -70,7 +76,7 @@ void load_directory(Panel *p) {
 
             // Formatear para el Panel (Ej: COMMAND.COM)
             sprintf(p->files[count].name, "%s.%s", strtok(clean_name, " "), clean_ext);
-            
+
             // Tamaño aproximado (RC * 128 bytes / 1024)
             p->files[count].size_kb = (dir_entry->rc * 128) / 1024;
             if (p->files[count].size_kb == 0 && dir_entry->rc > 0) p->files[count].size_kb = 1;
@@ -83,6 +89,8 @@ void load_directory(Panel *p) {
     }
     p->num_files = count;
 }
+
+
 /* IMPLEMENTACIÓN COMPLETA: Función para borrar el archivo seleccionado */
 /* Asegúrate de incluir string.h para el memset */
 #include <string.h>
@@ -91,7 +99,7 @@ int borrar_archivo(Panel *p) {
     unsigned char fcb[36];
     char *name_ptr;
     int i;
-    
+
     if (p->num_files == 0) return -1;
 
     memset(fcb, 0, sizeof(fcb));
@@ -100,7 +108,7 @@ int borrar_archivo(Panel *p) {
     /* Copiar nombre (8 bytes) y extensión (3 bytes) al FCB */
     memset(&fcb[1], ' ', 11);
     name_ptr = p->files[p->current_idx].name;
-    
+
     // Lógica para separar nombre de extensión (Ej: "DUMP.COM")
     for(i = 0; i < 8 && name_ptr[i] != '.' && name_ptr[i] != '\0'; i++) {
         fcb[1+i] = name_ptr[i];
@@ -115,6 +123,8 @@ int borrar_archivo(Panel *p) {
 
     return bdos(19, fcb); // Función 19: Borrar archivo
 }
+
+
 /* NUEVA RUTINA: Copiar el archivo seleccionado al panel opuesto */
 int copiar_archivo(Panel *src, Panel *dst) {
     unsigned char fcb_src[36], fcb_dst[36];
@@ -159,19 +169,30 @@ int copiar_archivo(Panel *src, Panel *dst) {
     bdos(16, fcb_dst); // CERRAR archivo (Fundamental para salvar cambios)
     return 0;
 }
+
+
+void show_header() {
+    printf("\x1b[2J\x1b[H\x1b[?25l"); // erase, home, hide cursor
+}
+
+
+void show_footer( const char *action, const char *file_name ) {
+    printf("\x1b[7m %s: %s (<SPACE>: more | <ESC>: exit) \x1b[0m", action, file_name); // inv / normal
+}
+
+
 /* FUNCIÓN VIEW CORREGIDA: Con paginación, salida por ESC y llaves balanceadas */
 void view_file(Panel *p) {
     unsigned char fcb[36];
     int i;
-    int line_count = 0;
+    int line_count = -1;
     char *name_ptr = p->files[p->current_idx].name;
     char *temp_ptr;
 
     if (p->num_files == 0) return;
 
     /* 1. Limpiar pantalla para el visor */
-    printf("\x1b[2J\x1b[H\x1b[?25h"); 
-    printf("\x1b[7m Viendo: %s (ESC: Salir | Espacio: Mas) \x1b[0m\r\n\n", name_ptr);
+    show_header();
 
     /* 2. Preparar FCB */
     memset(fcb, 0, 36);
@@ -187,50 +208,49 @@ void view_file(Panel *p) {
     }
 
     /* 3. Abrir y leer */
-    if (bdos(15, fcb) != 255) {
+    if (bdos(15, fcb) != 255) { // open
         while (bdos(20, fcb) == 0) { // Leer registro de 128 bytes
             for (i = 0; i < 128; i++) {
                 char c = *((char *)(0x80 + i));
-                if (c == 0x1A) goto end_view; // EOF (Ctrl+Z)
-                
+                if (c == 0x1A) goto end_of_file; // EOF (Ctrl+Z)
+
                 putchar(c);
 
                 if (c == '\n') {
                     putchar('\r'); // Retorno de carro para CP/M
                     line_count++;
-                    
+
                     // Pausa cuando se llena la pantalla (aprox VISIBLE_ROWS líneas)
-                    if (line_count >= VISIBLE_ROWS) { 
-                        printf("\x1b[7m -- MAS (ESC:Salir) -- \x1b[0m");
-                        
+                    if (line_count >= PANEL_HEIGHT) {
+                        show_footer( "VIEW", name_ptr );
                         unsigned char k = wait_key_hw();
-                        if (k == 27) goto end_view; // Salida por ESC
-                        
-                        printf("\r                       \r"); 
+                        printf("\r\x1b[K"); // CR, era EOL
+                        if (k == 27) return; // Salida por ESC
                         line_count = 0;
                     }
                 }
             }
         }
     } else {
-        printf("\r\nError al abrir el archivo.");
+        printf("\r\nError opening file.");
     }
-
-end_view:
-    printf("\r\n\n\x1b[7m --- FIN DEL ARCHIVO --- \x1b[0m");
-    wait_key_hw(); 
+end_of_file:
+    printf("\r\n\x1b[7m --- End Of File --- \x1b[0m"); // inv / normal
+    wait_key_hw();
 }
+
+
 /* FUNCIÓN DUMP: Volcado Hexadecimal y ASCII (16 bytes por línea) */
 void dump_file(Panel *p) {
     unsigned char fcb[36];
-    int i, j, line_count = 0;
+    int i, j, line_count = -1;
     long address = 0;
     char *name_ptr = p->files[p->current_idx].name;
 
     if (p->num_files == 0) return;
 
-    printf("\x1b[2J\x1b[H\x1b[?25h");
-    printf("\x1b[7m DUMP: %s (ESC: Salir | Espacio: Mas) \x1b[0m\r\n\n", name_ptr);
+    /* 1. Limpiar pantalla para el visor */
+    show_header();
 
     /* Preparar FCB */
     memset(fcb, 0, 36);
@@ -250,7 +270,7 @@ void dump_file(Panel *p) {
             for (i = 0; i < 128; i += 16) {
                 // 1. Mostrar dirección
                 printf("%04X  ", (unsigned int)address);
-                
+
                 // 2. Bloque Hexadecimal
                 for (j = 0; j < 16; j++) {
                     printf("%02X ", *((unsigned char *)(0x80 + i + j)));
@@ -264,23 +284,26 @@ void dump_file(Panel *p) {
                     else putchar('.');
                 }
                 printf("|\r\n");
-                
+
                 address += 16;
                 line_count++;
 
-                if (line_count >= VISIBLE_ROWS) {
-                    printf("\x1b[7m -- MAS (ESC:Salir) -- \x1b[0m");
-                    if (wait_key_hw() == 27) goto end_dump;
+                if (line_count >= PANEL_HEIGHT) {
+                    show_footer( "DUMP", name_ptr );
+                    if (wait_key_hw() == 27) return;
                     printf("\r                       \r");
                     line_count = 0;
                 }
             }
         }
+    } else {
+        printf("\r\nError opening file.");
     }
-end_dump:
-    printf("\r\n\x1b[7m --- FIN DEL DUMP --- \x1b[0m");
+    printf("\r\n\x1b[7m --- End Of File --- \x1b[0m"); // inv / normal
     wait_key_hw();
 }
+
+
 /* Rutina base: Copia un archivo específico por su índice */
 /* 1. Función base de copia (Asegúrate de que el nombre sea este) */
 int copiar_archivo_por_indice(Panel *src, Panel *dst, int idx) {
@@ -319,6 +342,7 @@ int copiar_archivo_por_indice(Panel *src, Panel *dst, int idx) {
     return 0;
 }
 
+
 /* 2. Función Maestra: Procesa la selección múltiple */
 void ejecutar_copia_multiple(Panel *src, Panel *dst) {
     int i, marcados = 0, procesados = 0;
@@ -328,15 +352,16 @@ void ejecutar_copia_multiple(Panel *src, Panel *dst) {
     }
 
     if (marcados == 0) {
-        printf("\x1b[31;1H\x1b[0;37m Copiando: %s... \x1b[0m", src->files[src->current_idx].name);
+        printf("\x1b[%d;1H\x1b[7m Copying: %s... \x1b[0m",
+               SCREEN_HEIGHT-1, src->files[src->current_idx].name);
         copiar_archivo_por_indice(src, dst, src->current_idx);
     } else {
         for (i = 0; i < src->num_files; i++) {
             if (src->files[i].seleccionado) {
                 procesados++;
-                printf("\x1b[31;1H\x1b[42;37m [%d/%d] Copiando: %s \x1b[0m", 
-                       procesados, marcados, src->files[i].name);
-                
+                printf("\x1b[%d;1H\x1b[7m [%d/%d] Copying: %s \x1b[0m",
+                       SCREEN_HEIGHT-1, procesados, marcados, src->files[i].name);
+
                 // USAR EL NOMBRE CORRECTO AQUÍ:
                 copiar_archivo_por_indice(src, dst, i);
                 src->files[i].seleccionado = 0; 
@@ -347,6 +372,8 @@ void ejecutar_copia_multiple(Panel *src, Panel *dst) {
     // Quitamos refresh_ui() de aquí porque operaciones.c no la conoce.
     // El refresh lo hará el main.c después de llamar a esta función.
 }
+
+
 /* Función Maestra de Borrado en operaciones.c */
 void ejecutar_borrado_multiple(Panel *p) {
     int i, marcados = 0, procesados = 0;
@@ -359,21 +386,21 @@ void ejecutar_borrado_multiple(Panel *p) {
 
     if (marcados == 0) {
         // Si no hay marcados, borramos solo el actual (funcionalidad original) [cite: 2026-01-28]
-        printf("\x1b[31;1H\x1b[K Borrando: %s... ", p->files[p->current_idx].name);
+        printf("\x1b[%d;1H\x1b[K Deleting: %s... ", SCREEN_HEIGHT-1, p->files[p->current_idx].name);
         borrar_archivo(p);
     } else {
         // Borrado en lote [cite: 2026-01-31]
         for (i = 0; i < p->num_files; i++) {
             if (p->files[i].seleccionado) {
                 procesados++;
-                printf("\x1b[31;1H\x1b[K [%d/%d] Borrando: %s ", 
-                       procesados, marcados, p->files[i].name);
-                
+                printf("\x1b[%d;1H\x1b[K [%d/%d] Deleting: %s ", // pos, erase to EOL
+                       SCREEN_HEIGHT-1,  procesados, marcados, p->files[i].name);
+
                 /* Preparamos el FCB para el archivo i */
                 memset(fcb, 0, sizeof(fcb));
                 fcb[0] = (p->drive - 'A') + 1;
                 memset(&fcb[1], ' ', 11);
-                
+
                 char *name_ptr = p->files[i].name;
                 int j;
                 for(j = 0; j < 8 && name_ptr[j] != '.' && name_ptr[j] != '\0'; j++) fcb[1+j] = name_ptr[j];
@@ -389,5 +416,5 @@ void ejecutar_borrado_multiple(Panel *p) {
         }
     }
     // Limpiamos rastro del diálogo
-    printf("\x1b[31;1H\x1b[K");
+    printf("\x1b[%d;1H\x1b[K", SCREEN_HEIGHT-1 ); // pos, erase EOL
 }

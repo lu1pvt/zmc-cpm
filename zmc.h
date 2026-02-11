@@ -17,20 +17,28 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 */
 #ifndef ZMC_H
 #define ZMC_H
-#define MAX_FILES 80        // Aumentamos el buffer de archivos
+
+#include <stdint.h>
+
+#define MAX_FILES 200        // Aumentamos el buffer de archivos
 #define FILENAME_LEN 13
-#define SCREEN_HEIGHT 32    
-#define PANEL_WIDTH 40
-#define PANEL_HEIGHT 30  // Ajustable según la terminal
+#define SCREEN_HEIGHT (*LINES) // 32
+#define PANEL_WIDTH (*COLUMNS/2) //40
+#define PANEL_HEIGHT (SCREEN_HEIGHT - 2) // 30  // Ajustable según la terminal
 #define VISIBLE_ROWS (PANEL_HEIGHT - 2)
+
 /* Macros para colores VT100 */
-#define CLR_PANEL "\x1b[0;37m"  // Azul/Blanco
-#define CLR_RESET "\x1b[0m"
+//#define CLR_PANEL "\x1b[0m"  // Azul/Blanco
+//#define CLR_RESET "\x1b[0m"
+
+#define ESC 0x1B
+
 typedef struct {
     char name[FILENAME_LEN];
     unsigned int size_kb;
     int seleccionado;  // 0 = No, 1 = Sí (NUEVO)
 } FileEntry;
+
 
 typedef struct {
     FileEntry files[MAX_FILES];
@@ -41,11 +49,13 @@ typedef struct {
     int active;
 } Panel;
 
+
 typedef struct {
     Panel left;
     Panel right;
     Panel *active_panel;
 } AppState;
+
 
 void draw_panel(Panel *p, int x_offset);
 void load_directory(Panel *p);

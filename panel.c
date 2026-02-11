@@ -19,9 +19,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 #include <string.h>
 #include "zmc.h"
 
+extern uint8_t *LINES;
+extern uint8_t *COLUMNS;
+
 void draw_frame(int x, int y, int w, int h, char *title) {
     int i;
-    printf("\x1b[0;37m\x1b[%d;%dH+", y, x);
+    // printf("\x1b[0;37m\x1b[%d;%dH+", y, x);
+    printf("\x1b[%d;%dH+", y, x);
     for(i=0; i<w-2; i++) putchar('-');
     putchar('+');
     printf("\x1b[%d;%dH[ %s ]", y, x + 2, title);
@@ -34,29 +38,30 @@ void draw_frame(int x, int y, int w, int h, char *title) {
     putchar('+');
 }
 
+
 void draw_panel(Panel *p, int x_offset) {
     int i;
     char title[20];
-    int visible_rows = VISIBLE_ROWS; // macro  Wormetti
+    //int visible_rows = VISIBLE_ROWS; // macro  Wormetti
     /* Lógica de Scroll para 28 filas visibles */
     if (p->current_idx < p->scroll_offset) {
         p->scroll_offset = p->current_idx;
     }
-    if (p->current_idx >= p->scroll_offset + visible_rows) { 
-        p->scroll_offset = p->current_idx - (visible_rows - 1);
+    if (p->current_idx >= p->scroll_offset + VISIBLE_ROWS) {
+        p->scroll_offset = p->current_idx - (VISIBLE_ROWS - 1);
     }
-    printf("%s", CLR_PANEL);
-    sprintf(title, " Unidad %c: ", p->drive);
+    printf("\x1b[m"); // normal
+    sprintf(title, " DISK %c: ", p->drive);
     draw_frame(x_offset, 1, PANEL_WIDTH, PANEL_HEIGHT, title);
-    
-    for (i = 0; i < visible_rows; i++) {
+
+    for (i = 0; i < VISIBLE_ROWS; i++) {
         int f_idx = i + p->scroll_offset;
         printf("\x1b[%d;%dH", i + 2, x_offset + 1);
-        
+
         if (f_idx < p->num_files) {
             if (p->active && f_idx == p->current_idx) {
                 printf("\x1b[7m %-12s %8uK \x1b[27m", p->files[f_idx].name, p->files[f_idx].size_kb);
-                printf("\x1b[0;37m"); 
+                printf("\x1b[m");
             } else {
                 printf(" %-12s %8uK ", p->files[f_idx].name, p->files[f_idx].size_kb);
             }
@@ -65,6 +70,8 @@ void draw_panel(Panel *p, int x_offset) {
         }
     }
 }
+
+
 void draw_file_line(Panel *p, int x_offset, int file_idx) {
     int screen_row = (file_idx - p->scroll_offset) + 2;
     char selector;
@@ -90,7 +97,7 @@ void draw_file_line(Panel *p, int x_offset, int file_idx) {
                Si está seleccionado, podrías usar \x1b[1m (Negrita) para resaltarlo más,
                pero mantendremos el esquema de colores azul/blanco para no perder la estética.
             */
-            printf("\x1b[0;37m%c%-12s %8uK ", 
+            printf("\x1b[m%c%-12s %8uK ",
                    selector, 
                    p->files[file_idx].name, 
                    p->files[file_idx].size_kb);
