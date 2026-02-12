@@ -4,9 +4,7 @@
 *.sym
 *.lis
 *.bin
-zmc.com
-ZMC.COM
+*.COM
 .DS_Store
-SNIFF.COM
 ps_kill
 sniffer.c
