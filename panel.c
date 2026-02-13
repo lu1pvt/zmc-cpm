@@ -40,12 +40,12 @@ void draw_frame(int x, int y, int w, int h, char *title) {
 void draw_file_info( Panel *p, int f_idx ) {
     if (p->active && f_idx == p->current_idx)
         INVERS;
-    printf("%c%-12s ",
+    printf("%c%-12s %4uK ",
         p->files[f_idx].seleccionado ? '*' : ' ',
         p->files[f_idx].name,
         p->files[f_idx].size_kb
     );
-    if (p->files[f_idx].date) // date and time defined
+    if (p->files[f_idx].date) { // date and time defined
         printf(" %04d-%02d-%02d %02X:%02X",
             p->files[f_idx].date,
             p->files[f_idx].month,
@@ -53,6 +53,10 @@ void draw_file_info( Panel *p, int f_idx ) {
             p->files[f_idx].hour,
             p->files[f_idx].minute
         );
+    } else {
+        printf("                 " );
+    }
+
     if (p->active && f_idx == p->current_idx)
         NORMAL;
 }
