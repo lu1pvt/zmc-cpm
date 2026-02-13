@@ -17,15 +17,20 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 */
 #include <stdio.h>
+#include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 #include <cpm.h>
 #include "zmc.h"
 
 extern uint8_t *LINES;
 extern uint8_t *COLUMNS;
+extern uint8_t DEBUG;
+
+
 
 /* Estructura de un registro de directorio de CP/M (32 bytes) */
-struct cpm_dir {
+typedef struct cpm_dir {
     unsigned char drive;
     char name[8];
     char ext[3];
@@ -33,36 +38,125 @@ struct cpm_dir {
     unsigned char s1, s2;
     unsigned char rc;
     unsigned char map[16];
+} cpm_dir;
+
+
+uint8_t fcb_src[36];
+uint8_t fcb_dst[36];
+
+
+void prepare_fcb( char *name_ptr, Panel *src, Panel *dst ) {
+// setup one or two FCBs for reading, copying or deleting
+    if ( src ) {
+        memset(fcb_src, 0, 36);
+        fcb_src[0] = (src->drive - 'A') + 1;
+        memset(&fcb_src[1], ' ', 11);
+    }
+    if ( dst ) {
+        memset(fcb_dst, 0, 36);
+        fcb_dst[0] = (dst->drive - 'A') + 1;
+        memset(&fcb_dst[1], ' ', 11);
+    }
+    // copy NAME to the FCB(s)
+    for(uint8_t i = 0; i < 8 && name_ptr[i] != '.' && name_ptr[i] != '\0'; ++i) {
+        if ( src )
+            fcb_src[1+i] = name_ptr[i];
+        if ( dst )
+            fcb_dst[1+i] = name_ptr[i];
+    }
+    // separate NAME and copy EXT (e.g. "NAME.EXT")
+    while(*name_ptr && *name_ptr != '.')
+        name_ptr++;
+    if(*name_ptr == '.') {
+        name_ptr++;
+        for(uint8_t i = 0; i < 3 && name_ptr[i] != '\0'; i++) {
+        if ( src )
+            fcb_src[9+i] = name_ptr[i];
+        if ( dst )
+            fcb_dst[9+i] = name_ptr[i];
+        }
+    }
+}
+
+// Function to check if a year is leap
+uint8_t is_leap_year(int year) {
+    return (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+}
+
+// Array of days in month for normal and leap years
+const int days_in_month[2][12] = {
+    {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31},  // normal year
+    {31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31}   // leap year
 };
+
+// convert CP/M "Days since 1.1.1978" to YYMD
+// input:  date -> DD from CP/M directory
+// return: date -> YYMD
+void days_to_date( void *date ) {
+    uint16_t *cpm_date = (uint16_t *)date;
+    uint8_t *cpm_month = (uint8_t *)(date+2);
+    uint8_t *cpm_day = (uint8_t *)(date+3);
+
+    // Handle day 0
+    if (*cpm_date == 0) {
+        *cpm_day = 0;
+        *cpm_month = 0;
+    } else {
+        // Start from 1978
+        *cpm_date -= 1;
+        uint16_t year = 1978;
+
+        // Approximate year to reduce iterations
+        while (*cpm_date >= 365) {
+            uint16_t days_in_year = is_leap_year(year) ? 366 : 365;
+            if (*cpm_date < days_in_year) break;
+            *cpm_date -= days_in_year;
+            ++year;
+        }
+
+        // Find exact month and day
+        uint8_t leap = is_leap_year(year) ? 1 : 0;
+        uint8_t month = 0;
+
+        while (*cpm_date >= days_in_month[leap][month]) {
+            *cpm_date -= days_in_month[leap][month];
+            ++month;
+        }
+
+        *cpm_day = *cpm_date + 1;
+        *cpm_month = month + 1;
+        *cpm_date = year;
+    }
+}
 
 
 void load_directory(Panel *p) {
-    struct cpm_dir *dir_entry;
-    unsigned char fcb[36];
-    int count = 0;
-    int result;
+    cpm_dir *dir_entry;
+    // unsigned char fcb[36];
+    uint16_t count = 0;
+    uint8_t result;
 
     p->num_files = 0;
     p->current_idx = 0;
     p->scroll_offset = 0;
 
     if (p->drive == '@') // select current drive
-        p->drive = bdos( 25, fcb ) + 'A';
+        p->drive = bdos( 25, fcb_src ) + 'A';
     /* 1. Cambiar a la unidad deseada antes de buscar */
     bdos(14, p->drive - 'A'); 
 
     /* 2. Preparar FCB para buscar todos los archivos (*.*) */
-    memset(fcb, 0, sizeof(fcb));
-    fcb[0] = 0; // Unidad actual
-    memset(&fcb[1], '?', 11); // Comodines para nombre y extensión
+    memset(fcb_src, 0, sizeof(fcb_src));
+    fcb_src[0] = 0; // current drive
+    memset(&fcb_src[1], '?', 11); // name, ext: "????????.???"
 
     /* 3. Buscar el primer archivo */
-    result = bdos(17, fcb);
+    result = bdos(17, fcb_src); // BDOS function 17 (F_SFIRST) - search for first
 
-    while (result != 255 && count < MAX_FILES) {
+    while (result != 255 && count < MAX_FILES) { // OK: result = 0..3
         /* La entrada encontrada está en el buffer de DMA (por defecto 0x80) */
         /* result nos da el índice (0-3) dentro del sector de 128 bytes */
-        dir_entry = (struct cpm_dir *)(0x80 + (result * 32));
+        dir_entry = (cpm_dir *)(0x80 + (result * 32));
 
         /* Solo procesar si no es un archivo borrado (0xE5) */
         if (dir_entry->drive != 0xE5) {
@@ -73,100 +167,60 @@ void load_directory(Panel *p) {
             clean_name[8] = '\0';
             for(int i=0; i<3; i++) clean_ext[i] = dir_entry->ext[i] & 0x7F;
             clean_ext[3] = '\0';
-
             // Formatear para el Panel (Ej: COMMAND.COM)
             sprintf(p->files[count].name, "%s.%s", strtok(clean_name, " "), clean_ext);
 
             // Tamaño aproximado (RC * 128 bytes / 1024)
             p->files[count].size_kb = (dir_entry->rc * 128) / 1024;
+            p->files[count].seleccionado = 0;
             if (p->files[count].size_kb == 0 && dir_entry->rc > 0) p->files[count].size_kb = 1;
 
+            // check if date time info exists in the 4th 32 byte directory entry
+            if ( result < 3 && *((uint8_t *)(0xE0)) == '!' ) { // yes
+                date_time_dir *dtd = (date_time_dir *)(0xE0);
+                p->files[count].date = dtd->dt[result].update.date;
+                p->files[count].hour = dtd->dt[result].update.hour;
+                p->files[count].minute = dtd->dt[result].update.minute;
+                days_to_date( &(p->files[count].date) );
+            } else { // no date/time file info
+                p->files[count].date = 0;
+                p->files[count].hour = 0;
+                p->files[count].minute = 0;
+            }
             count++;
         }
 
         /* Buscar siguiente */
-        result = bdos(18, fcb);
+        result = bdos(18, fcb_src); // BDOS function 18 (F_SNEXT) - search for next
     }
     p->num_files = count;
 }
 
 
-/* IMPLEMENTACIÓN COMPLETA: Función para borrar el archivo seleccionado */
-/* Asegúrate de incluir string.h para el memset */
-#include <string.h>
-
+// Delete the selected file(s) on active panel
 int borrar_archivo(Panel *p) {
-    unsigned char fcb[36];
-    char *name_ptr;
-    int i;
-
     if (p->num_files == 0) return -1;
-
-    memset(fcb, 0, sizeof(fcb));
-    fcb[0] = (p->drive - 'A') + 1; // 1=A, 2=B...
-
-    /* Copiar nombre (8 bytes) y extensión (3 bytes) al FCB */
-    memset(&fcb[1], ' ', 11);
-    name_ptr = p->files[p->current_idx].name;
-
-    // Lógica para separar nombre de extensión (Ej: "DUMP.COM")
-    for(i = 0; i < 8 && name_ptr[i] != '.' && name_ptr[i] != '\0'; i++) {
-        fcb[1+i] = name_ptr[i];
-    }
-    while(*name_ptr && *name_ptr != '.') name_ptr++;
-    if(*name_ptr == '.') {
-        name_ptr++;
-        for(i = 0; i < 3 && name_ptr[i] != '\0'; i++) {
-            fcb[9+i] = name_ptr[i];
-        }
-    }
-
-    return bdos(19, fcb); // Función 19: Borrar archivo
+    prepare_fcb(p->files[p->current_idx].name, p, NULL );
+    return bdos(19, fcb_src); // BDOS function 19 (F_DELETE) - delete file
 }
 
 
-/* NUEVA RUTINA: Copiar el archivo seleccionado al panel opuesto */
+// Copy the selected file(s) to the opposite panel
 int copiar_archivo(Panel *src, Panel *dst) {
-    unsigned char fcb_src[36], fcb_dst[36];
-    char *name_ptr;
-    int i, result;
-
+    // any files to copy?
     if (src->num_files == 0) return -1;
-
-    /* 1. Preparar FCBs (Origen y Destino) */
-    memset(fcb_src, 0, 36);
-    memset(fcb_dst, 0, 36);
-    fcb_src[0] = (src->drive - 'A') + 1;
-    fcb_dst[0] = (dst->drive - 'A') + 1;
-
-    name_ptr = src->files[src->current_idx].name;
-    memset(&fcb_src[1], ' ', 11);
-    memset(&fcb_dst[1], ' ', 11);
-
-    // Mapear nombre y extensión a ambos FCB
-    for(i = 0; i < 8 && name_ptr[i] != '.' && name_ptr[i] != '\0'; i++) {
-        fcb_src[1+i] = fcb_dst[1+i] = name_ptr[i];
-    }
-    while(*name_ptr && *name_ptr != '.') name_ptr++;
-    if(*name_ptr == '.') {
-        name_ptr++;
-        for(i = 0; i < 3 && name_ptr[i] != '\0'; i++) {
-            fcb_src[9+i] = fcb_dst[9+i] = name_ptr[i];
-        }
-    }
-
-    /* 2. Operación de archivos vía BDOS */
-    bdos(19, fcb_dst);              // Borrar destino si ya existe
-    if (bdos(15, fcb_src) == 255) return -2; // Abrir origen (error si no abre)
-    if (bdos(22, fcb_dst) == 255) return -3; // Crear destino
-
-    /* 3. Bucle de transferencia (Sector a Sector) */
-    while (bdos(20, fcb_src) == 0) { // Leer registro de 128 bytes de SRC
-        // El dato ya está en 0x80 (DMA), lo escribimos en DST
-        if (bdos(21, fcb_dst) != 0) break; // Escribir registro en DST
-    }
-
-    bdos(16, fcb_dst); // CERRAR archivo (Fundamental para salvar cambios)
+    // fill the FCBs
+    prepare_fcb(src->files[src->current_idx].name, src, dst);
+    // prepare transfer
+    bdos(19, fcb_dst); // BDOS function 19 (F_DELETE) - delete file
+    if (bdos(15, fcb_src) == 255) return -2; // BDOS function 15 - Open directory
+    if (bdos(22, fcb_dst) == 255) return -3; // BDOS function 22 (F_MAKE) - create file
+    // do a sector to sector transfer
+    while (bdos(20, fcb_src) == 0) // BDOS function 20 (F_READ) - read next record
+        // write data in 0x80 (DMA) to DST
+        if (bdos(21, fcb_dst) != 0) break; // BDOS function 21 (F_WRITE) - write next record
+    // finish the transfer
+    bdos(16, fcb_dst); // BDOS function 16 - Close directory
     return 0;
 }
 
@@ -183,49 +237,31 @@ void show_footer( const char *action, const char *file_name ) {
 
 /* FUNCIÓN VIEW CORREGIDA: Con paginación, salida por ESC y llaves balanceadas */
 void view_file(Panel *p) {
-    unsigned char fcb[36];
+    // unsigned char fcb[36];
     int i;
     int line_count = -1;
     char *name_ptr = p->files[p->current_idx].name;
     char *temp_ptr;
 
     if (p->num_files == 0) return;
-
-    /* 1. Limpiar pantalla para el visor */
     show_header();
-
-    /* 2. Preparar FCB */
-    memset(fcb, 0, 36);
-    fcb[0] = (p->drive - 'A') + 1;
-    memset(&fcb[1], ' ', 11);
-
-    temp_ptr = name_ptr;
-    for(i=0; i<8 && temp_ptr[i] != '.' && temp_ptr[i] != '\0'; i++) fcb[1+i] = temp_ptr[i];
-    while(*temp_ptr && *temp_ptr != '.') temp_ptr++;
-    if(*temp_ptr == '.') {
-        temp_ptr++;
-        for(i=0; i<3 && temp_ptr[i] != '\0'; i++) fcb[9+i] = temp_ptr[i];
-    }
-
-    /* 3. Abrir y leer */
-    if (bdos(15, fcb) != 255) { // open
-        while (bdos(20, fcb) == 0) { // Leer registro de 128 bytes
+    prepare_fcb(p->files[p->current_idx].name, p, NULL);
+    // open and read
+    if (bdos(15, fcb_src) != 255) { // BDOS function 15 - Open directory
+        while (bdos(20, fcb_src) == 0) { // BDOS function 20 (F_READ) - read next record
             for (i = 0; i < 128; i++) {
                 char c = *((char *)(0x80 + i));
                 if (c == 0x1A) goto end_of_file; // EOF (Ctrl+Z)
-
                 putchar(c);
-
                 if (c == '\n') {
                     putchar('\r'); // Retorno de carro para CP/M
                     line_count++;
-
                     // Pausa cuando se llena la pantalla (aprox VISIBLE_ROWS líneas)
                     if (line_count >= PANEL_HEIGHT) {
                         show_footer( "VIEW", name_ptr );
                         unsigned char k = wait_key_hw();
-                        printf("\r\x1b[K"); // CR, era EOL
-                        if (k == 27) return; // Salida por ESC
+                        printf("\r\x1b[K"); // CR, erase EOL
+                        if (k == 27) return; // exit with ESC
                         line_count = 0;
                     }
                 }
@@ -240,9 +276,8 @@ end_of_file:
 }
 
 
-/* FUNCIÓN DUMP: Volcado Hexadecimal y ASCII (16 bytes por línea) */
+// HEX and ASCII dump (16 bytes per line)
 void dump_file(Panel *p) {
-    unsigned char fcb[36];
     int i, j, line_count = -1;
     long address = 0;
     char *name_ptr = p->files[p->current_idx].name;
@@ -251,33 +286,16 @@ void dump_file(Panel *p) {
 
     /* 1. Limpiar pantalla para el visor */
     show_header();
+    prepare_fcb(p->files[p->current_idx].name, p, NULL);
 
-    /* Preparar FCB */
-    memset(fcb, 0, 36);
-    fcb[0] = (p->drive - 'A') + 1;
-    memset(&fcb[1], ' ', 11);
-    // (Lógica de mapeo de nombre idéntica a view_file...)
-    char *temp = name_ptr;
-    for(i=0; i<8 && temp[i] != '.' && temp[i] != '\0'; i++) fcb[1+i] = temp[i];
-    while(*temp && *temp != '.') temp++;
-    if(*temp == '.') {
-        temp++;
-        for(i=0; i<3 && temp[i] != '\0'; i++) fcb[9+i] = temp[i];
-    }
-
-    if (bdos(15, fcb) != 255) {
-        while (bdos(20, fcb) == 0) { // Leer 128 bytes
+    if (bdos(15, fcb_src) != 255) { // BDOS function 15 - Open directory
+        while (bdos(20, fcb_src) == 0) { // BDOS function 20 (F_READ) - read next record
             for (i = 0; i < 128; i += 16) {
-                // 1. Mostrar dirección
                 printf("%04X  ", (unsigned int)address);
-
-                // 2. Bloque Hexadecimal
                 for (j = 0; j < 16; j++) {
                     printf("%02X ", *((unsigned char *)(0x80 + i + j)));
                 }
                 printf(" |");
-
-                // 3. Bloque ASCII
                 for (j = 0; j < 16; j++) {
                     unsigned char c = *((unsigned char *)(0x80 + i + j));
                     if (c >= 32 && c <= 126) putchar(c);
@@ -304,41 +322,15 @@ void dump_file(Panel *p) {
 }
 
 
-/* Rutina base: Copia un archivo específico por su índice */
-/* 1. Función base de copia (Asegúrate de que el nombre sea este) */
-int copiar_archivo_por_indice(Panel *src, Panel *dst, int idx) {
-    unsigned char fcb_src[36], fcb_dst[36];
-    char *name_ptr;
-    int i;
-
-    memset(fcb_src, 0, 36);
-    memset(fcb_dst, 0, 36);
-    fcb_src[0] = (src->drive - 'A') + 1;
-    fcb_dst[0] = (dst->drive - 'A') + 1;
-
-    name_ptr = src->files[idx].name;
-    memset(&fcb_src[1], ' ', 11);
-    memset(&fcb_dst[1], ' ', 11);
-
-    char *temp = name_ptr;
-    for(i = 0; i < 8 && temp[i] != '.' && temp[i] != '\0'; i++) 
-        fcb_src[1+i] = fcb_dst[1+i] = temp[i];
-    while(*temp && *temp != '.') temp++;
-    if(*temp == '.') {
-        temp++;
-        for(i = 0; i < 3 && temp[i] != '\0'; i++) 
-            fcb_src[9+i] = fcb_dst[9+i] = temp[i];
-    }
-
-    bdos(19, fcb_dst); 
-    if (bdos(15, fcb_src) == 255) return -1; 
-    if (bdos(22, fcb_dst) == 255) return -1; 
-
-    while (bdos(20, fcb_src) == 0) {
-        if (bdos(21, fcb_dst) != 0) break;
-    }
-
-    bdos(16, fcb_dst);
+// copy a specific file by its index
+int copiar_archivo_por_indice(Panel *src, Panel *dst, uint16_t idx) {
+    prepare_fcb(src->files[idx].name, src, dst);
+    bdos(19, fcb_dst); // BDOS function 19 (F_DELETE) - delete file
+    if (bdos(15, fcb_src) == 255) return -1; // BDOS function 15 - Open directory
+    if (bdos(22, fcb_dst) == 255) return -1; // BDOS function 22 (F_MAKE) - create file
+    while (bdos(20, fcb_src) == 0) // BDOS function 20 (F_READ) - read next record
+        if (bdos(21, fcb_dst) != 0) break; // BDOS function 21 (F_WRITE) - write next record
+    bdos(16, fcb_dst); // BDOS function 16 - Close directory
     return 0;
 }
 
@@ -369,21 +361,15 @@ void ejecutar_copia_multiple(Panel *src, Panel *dst) {
         }
     }
     load_directory(dst);
-    // Quitamos refresh_ui() de aquí porque operaciones.c no la conoce.
-    // El refresh lo hará el main.c después de llamar a esta función.
+    // The refresh will be done by main.c after calling this function.
 }
 
-
-/* Función Maestra de Borrado en operaciones.c */
 void ejecutar_borrado_multiple(Panel *p) {
     int i, marcados = 0, procesados = 0;
-    unsigned char fcb[36];
-
     // Contar cuántos hay marcados
     for (i = 0; i < p->num_files; i++) {
         if (p->files[i].seleccionado) marcados++;
     }
-
     if (marcados == 0) {
         // Si no hay marcados, borramos solo el actual (funcionalidad original) [cite: 2026-01-28]
         printf("\x1b[%d;1H\x1b[K Deleting: %s... ", SCREEN_HEIGHT-1, p->files[p->current_idx].name);
@@ -396,25 +382,12 @@ void ejecutar_borrado_multiple(Panel *p) {
                 printf("\x1b[%d;1H\x1b[K [%d/%d] Deleting: %s ", // pos, erase to EOL
                        SCREEN_HEIGHT-1,  procesados, marcados, p->files[i].name);
 
-                /* Preparamos el FCB para el archivo i */
-                memset(fcb, 0, sizeof(fcb));
-                fcb[0] = (p->drive - 'A') + 1;
-                memset(&fcb[1], ' ', 11);
-
-                char *name_ptr = p->files[i].name;
-                int j;
-                for(j = 0; j < 8 && name_ptr[j] != '.' && name_ptr[j] != '\0'; j++) fcb[1+j] = name_ptr[j];
-                while(*name_ptr && *name_ptr != '.') name_ptr++;
-                if(*name_ptr == '.') {
-                    name_ptr++;
-                    for(j = 0; j < 3 && name_ptr[j] != '\0'; j++) fcb[9+j] = name_ptr[j];
-                }
-
-                bdos(19, fcb); // Función 19: Borrar
+                prepare_fcb(p->files[i].name, p, NULL);
+                bdos(19, fcb_src); // BDOS function 19 (F_DELETE) - delete file
                 p->files[i].seleccionado = 0; 
             }
         }
     }
-    // Limpiamos rastro del diálogo
+    // clear dialog part
     printf("\x1b[%d;1H\x1b[K", SCREEN_HEIGHT-1 ); // pos, erase EOL
 }

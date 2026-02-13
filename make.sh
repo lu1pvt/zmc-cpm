@@ -3,7 +3,7 @@
 # -O3: Optimización máxima
 # -create-app: Genera el archivo .COM directamente
 
-zcc +cpm -O3 -vn main.c panel.c operaciones.c -o ZMC.COM -create-app
+zcc +cpm -O3 -vn -DAMALLOC main.c panel.c operaciones.c globals.c -o zmc.com -create-app
 
 if [ $? -eq 0 ]; then
     echo "✅ Compilación exitosa: ZMC.COM generado."
