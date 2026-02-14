@@ -23,13 +23,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 #include <cpm.h>
 #include "zmc.h"
 
-extern uint8_t *LINES;
-extern uint8_t *COLUMNS;
-extern uint8_t DEBUG;
 
-
-
-/* Estructura de un registro de directorio de CP/M (32 bytes) */
+/* CP/M directory entry (32 bytes) */
 typedef struct cpm_dir {
     unsigned char drive;
     char name[8];
@@ -130,6 +125,13 @@ void days_to_date( void *date ) {
 }
 
 
+// Three-way compare function for the name field of FileEntry used by qsort
+static int fileNameCompare(const void* a, const void* b) {
+    // setting up rules for comparison
+    return strcmp( ((const FileEntry*)a)->name, ((const FileEntry*)b)->name );
+}
+
+
 void load_directory(Panel *p) {
     cpm_dir *dir_entry;
     // unsigned char fcb[36];
@@ -140,41 +142,42 @@ void load_directory(Panel *p) {
     p->current_idx = 0;
     p->scroll_offset = 0;
 
-    if (p->drive == '@') // select current drive
+    if (p->drive == '@') // '@' -> select current drive
         p->drive = bdos( 25, fcb_src ) + 'A';
-    /* 1. Cambiar a la unidad deseada antes de buscar */
+    /* 1. change drive to fetch the complete directory */
     bdos(14, p->drive - 'A'); 
 
-    /* 2. Preparar FCB para buscar todos los archivos (*.*) */
+    /* 2. Prepare FCB to match all files (*.*) */
     memset(fcb_src, 0, sizeof(fcb_src));
     fcb_src[0] = 0; // current drive
     memset(&fcb_src[1], '?', 11); // name, ext: "????????.???"
 
-    /* 3. Buscar el primer archivo */
+    /* 3. Find 1st file */
     result = bdos(17, fcb_src); // BDOS function 17 (F_SFIRST) - search for first
 
     while (result != 255 && count < MAX_FILES) { // OK: result = 0..3
-        /* La entrada encontrada está en el buffer de DMA (por defecto 0x80) */
-        /* result nos da el índice (0-3) dentro del sector de 128 bytes */
+        /* record is in default DMA (0x80) */
+        /* 32 bytes dir entries according index (0-3) in 128 bytes record */
         dir_entry = (cpm_dir *)(0x80 + (result * 32));
 
-        /* Solo procesar si no es un archivo borrado (0xE5) */
+        /* only if not erased (0xE5) */
         if (dir_entry->drive != 0xE5) {
             char clean_name[9], clean_ext[4];
 
-            // Limpiar nombre (quitar bits de atributos y espacios)
+            // name.ext (w/o attribute bits)
             for(int i=0; i<8; i++) clean_name[i] = dir_entry->name[i] & 0x7F;
             clean_name[8] = '\0';
             for(int i=0; i<3; i++) clean_ext[i] = dir_entry->ext[i] & 0x7F;
             clean_ext[3] = '\0';
-            // Formatear para el Panel (Ej: COMMAND.COM)
+            // format for panel display (e.g.: "COMMAND COM" -> "COMMAND.COM")
             sprintf(p->files[count].name, "%s.%s", strtok(clean_name, " "), clean_ext);
 
-            // Tamaño aproximado (RC * 128 bytes / 1024)
+            // file size (RC * 128 bytes / 1024)
             p->files[count].size_kb = (dir_entry->rc * 128) / 1024;
             p->files[count].seleccionado = 0;
             if (p->files[count].size_kb == 0 && dir_entry->rc > 0) p->files[count].size_kb = 1;
 
+            // handle the CP/M3 date/time entry
             // check if date time info exists in the 4th 32 byte directory entry
             if ( result < 3 && *((uint8_t *)(0xE0)) == '!' ) { // yes
                 date_time_dir *dtd = (date_time_dir *)(0xE0);
@@ -190,15 +193,17 @@ void load_directory(Panel *p) {
             count++;
         }
 
-        /* Buscar siguiente */
+        /* find all other files */
         result = bdos(18, fcb_src); // BDOS function 18 (F_SNEXT) - search for next
     }
     p->num_files = count;
+    // lib function quick sort, sort file names
+    qsort((void *)p->files, p->num_files, sizeof(FileEntry), fileNameCompare);
 }
 
 
 // Delete the selected file(s) on active panel
-int borrar_archivo(Panel *p) {
+int delete_file(Panel *p) {
     if (p->num_files == 0) return -1;
     prepare_fcb(p->files[p->current_idx].name, p, NULL );
     return bdos(19, fcb_src); // BDOS function 19 (F_DELETE) - delete file
@@ -206,7 +211,7 @@ int borrar_archivo(Panel *p) {
 
 
 // Copy the selected file(s) to the opposite panel
-int copiar_archivo(Panel *src, Panel *dst) {
+int copy_file(Panel *src, Panel *dst) {
     // any files to copy?
     if (src->num_files == 0) return -1;
     // fill the FCBs
@@ -323,7 +328,7 @@ void dump_file(Panel *p) {
 
 
 // copy a specific file by its index
-int copiar_archivo_por_indice(Panel *src, Panel *dst, uint16_t idx) {
+int copy_file_by_index(Panel *src, Panel *dst, uint16_t idx) {
     prepare_fcb(src->files[idx].name, src, dst);
     bdos(19, fcb_dst); // BDOS function 19 (F_DELETE) - delete file
     if (bdos(15, fcb_src) == 255) return -1; // BDOS function 15 - Open directory
@@ -335,8 +340,8 @@ int copiar_archivo_por_indice(Panel *src, Panel *dst, uint16_t idx) {
 }
 
 
-/* 2. Función Maestra: Procesa la selección múltiple */
-void ejecutar_copia_multiple(Panel *src, Panel *dst) {
+/* 2. process multi selections */
+void exec_multi_copy(Panel *src, Panel *dst) {
     int i, marcados = 0, procesados = 0;
 
     for (i = 0; i < src->num_files; i++) {
@@ -346,7 +351,7 @@ void ejecutar_copia_multiple(Panel *src, Panel *dst) {
     if (marcados == 0) {
         printf("\x1b[%d;1H\x1b[7m Copying: %s... \x1b[0m",
                SCREEN_HEIGHT-1, src->files[src->current_idx].name);
-        copiar_archivo_por_indice(src, dst, src->current_idx);
+        copy_file_by_index(src, dst, src->current_idx);
     } else {
         for (i = 0; i < src->num_files; i++) {
             if (src->files[i].seleccionado) {
@@ -355,27 +360,27 @@ void ejecutar_copia_multiple(Panel *src, Panel *dst) {
                        SCREEN_HEIGHT-1, procesados, marcados, src->files[i].name);
 
                 // USAR EL NOMBRE CORRECTO AQUÍ:
-                copiar_archivo_por_indice(src, dst, i);
+                copy_file_by_index(src, dst, i);
                 src->files[i].seleccionado = 0; 
             }
         }
     }
     load_directory(dst);
-    // The refresh will be done by main.c after calling this function.
+    // the refresh will be done by main.c after calling this function.
 }
 
-void ejecutar_borrado_multiple(Panel *p) {
+void exec_multi_delete(Panel *p) {
     int i, marcados = 0, procesados = 0;
-    // Contar cuántos hay marcados
+    // count number of selections
     for (i = 0; i < p->num_files; i++) {
         if (p->files[i].seleccionado) marcados++;
     }
     if (marcados == 0) {
-        // Si no hay marcados, borramos solo el actual (funcionalidad original) [cite: 2026-01-28]
+        // if none selected, delete  the current file (original functionality)
         printf("\x1b[%d;1H\x1b[K Deleting: %s... ", SCREEN_HEIGHT-1, p->files[p->current_idx].name);
-        borrar_archivo(p);
+        delete_file(p);
     } else {
-        // Borrado en lote [cite: 2026-01-31]
+        // batch deletion
         for (i = 0; i < p->num_files; i++) {
             if (p->files[i].seleccionado) {
                 procesados++;

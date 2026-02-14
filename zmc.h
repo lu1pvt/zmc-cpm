@@ -92,13 +92,13 @@ typedef struct {
 void draw_panel(Panel *p, uint8_t x_offset);
 void load_directory(Panel *p);
 uint8_t wait_key_hw(void);
-int borrar_archivo(Panel *p);
-int copiar_archivo(Panel *src, Panel *dst);
+int delete_file(Panel *p);
+int copy_file(Panel *src, Panel *dst);
 void draw_file_line(Panel *p, uint8_t x_offset, uint16_t file_idx);
 void view_file(Panel *p);
 void dump_file(Panel *p);
-int copiar_archivo_por_indice(Panel *src, Panel *dst, uint16_t idx);
-void ejecutar_copia_multiple(Panel *src, Panel *dst);
-void ejecutar_borrado_multiple(Panel *p);
+int copy_file_by_index(Panel *src, Panel *dst, uint16_t idx);
+void exec_multi_copy(Panel *src, Panel *dst);
+void exec_multi_delete(Panel *p);
 
 #endif

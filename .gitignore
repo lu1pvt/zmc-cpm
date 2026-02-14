@@ -10,3 +10,9 @@
 .DS_Store
 ps_kill
 sniffer.c
+# some devel files
+*.bak
+*.new
+*.old
+*.orig
+*.work
