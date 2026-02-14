@@ -15,233 +15,319 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/>.
 */
+#include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <malloc.h>
 #include "zmc.h"
 
-AppState App;
-/*
-unsigned char wait_key_hw(void) {
-    #asm
-    loophw_zmc:
-        in a, (025h)
-        and 01h
-        jr z, loophw_zmc
-        in a, (020h)
-        ld l, a
-        ld h, 0
-    #endasm
-}
-*/
+AppState *App = NULL; // will be malloc'd in main
 
 
 unsigned char wait_key_hw() {
 #asm
 loop_bdos_kbd:
-    ld c, 06h    ; Función 6: Direct I/O
-    ld e, 0FFh   ; Modo entrada
-    call 0005h   ; Llamada al BDOS
-    or a         ; ¿Hay tecla?
+    ld c, 06h    ; function 6: Direct I/O
+    ld e, 0FFh   ; check w/o echo
+    call 0005h   ; BDOS
+    or a         ; key available?
     jr z, loop_bdos_kbd
-    ld l, a      ; Retornar tecla en HL
+    ld l, a      ; return key in HL
     ld h, 0
 #endasm
 }
 
-void refresh_ui() {
-    draw_panel(&App.left, 1);
-    draw_panel(&App.right, 41);
 
-    printf("\x1b[31;1H\x1b[0m%c> ", App.active_panel->drive);
-    printf("\x1b[32;1H\x1b[47;30m F1:Help | F3:View | F4:Dump | U:Drive | F5:Copy | F8:Del | TAB:Sw | ^X:Exit \x1b[0m");
+void refresh_ui(unsigned char all) {
+    if ( all || App->left.active )
+        draw_panel(&App->left, 1);
+    if ( all || App->right.active )
+        draw_panel(&App->right, *COLUMNS/2+1);
+    printf("\x1b[%d;1H\x1b[0m%c> ", *LINES - 1, App->active_panel->drive);
+    printf("\x1b[%d;1H\x1b[7m| A: - P: | TAB:Sw | F1:Help | F3:View | F4:Dump | F5:Copy | F8:Del | F10:Exit |\x1b[0m", *LINES);
 }
 
-int main() {
-    App.left.drive = 'A'; App.left.active = 1;
-    App.right.drive = 'B'; App.right.active = 0;
-    App.active_panel = &App.left;
 
-    load_directory(&App.left);
-    load_directory(&App.right);
-    printf("\x1b[?25l"); // Ocultar cursor físico de la terminal
-    printf("\x1b[2J\x1b[H");
-    refresh_ui();
+void other_panel() {
+    int old_left_idx = App->left.current_idx;
+    int old_right_idx = App->right.current_idx;
 
-    while(1) {
-        unsigned char k = wait_key_hw();
+    // change focus
+    App->left.active = !App->left.active;
+    App->right.active = !App->right.active;
+    App->active_panel = App->left.active ? &App->left : &App->right;
 
-        // 1. TAB: Cambio de panel
-        /* REEMPLAZAR el bloque del TAB (0x09) en main.c */
-	if (k == 0x09) {
-	    int old_left_idx = App.left.current_idx;
-	    int old_right_idx = App.right.current_idx;
+    // chirurgical update: refresh only the lines with cursors
+    draw_file_line(&App->left, 1, old_left_idx);
+    draw_file_line(&App->right, *COLUMNS/2+1, old_right_idx);
 
-	    // Cambiar el foco
-	    App.left.active = !App.left.active;
-	    App.right.active = !App.right.active;
-	    App.active_panel = App.left.active ? &App.left : &App.right;
+    // ... and the prompt
+    printf("\x1b[%d;1H\x1b[m%c> \x1b[K", *LINES-1, App->active_panel->drive); // pos, normal. clr eol
+}
 
-	    // Dibujo quirúrgico: refrescar solo las líneas donde están los cursores
-	    draw_file_line(&App.left, 1, old_left_idx);
-	    draw_file_line(&App.right, 41, old_right_idx);
-	    
-	    // Actualizar solo el prompt inferior
-	    printf("\x1b[31;1H\x1b[0m%c> ", App.active_panel->drive);
-	    continue;
-	}
 
-        // 2. U: Cambio de Unidad
-        if (k == 'u' || k == 'U') {
-            printf("\x1b[31;1H\x1b[45;37m Seleccione Unidad (A-Z): \x1b[0m");
-            unsigned char drive_char = wait_key_hw();
-            if (drive_char >= 'a' && drive_char <= 'z') drive_char -= 32;
-            if (drive_char >= 'A' && drive_char <= 'Z') {
-                App.active_panel->drive = drive_char;
-                load_directory(App.active_panel);
-            }
-            refresh_ui();
-            continue;
+void change_drive( char k ) {
+    if ( k >= 'a' && k <= 'p') k -= 32;
+    printf("\x1b[%d;1H\x1b[7m\x1b[5m%c>\x1b[m", *LINES-1, k); // CUP row 31 col 1;
+    if ( wait_key_hw() == ':' ) {
+        App->active_panel->drive = k;
+        load_directory(App->active_panel);
+    }
+    refresh_ui( 0 );
+}
+
+
+void select_file() {
+    int idx = App->active_panel->current_idx;
+    int offset = (App->active_panel == &App->left) ? 1 : *COLUMNS/2+1;
+
+    // A. invert the selection state in memory
+    App->active_panel->files[idx].seleccionado = !App->active_panel->files[idx].seleccionado;
+
+    // B. redraw current line to show '*'
+    // IMPORTANT: current_idx was not changed, line is drawn with cursor.
+    draw_file_line(App->active_panel, offset, idx);
+
+    // C. move the cursor to the next line
+    if (App->active_panel->current_idx < App->active_panel->num_files - 1) {
+        int old_idx = App->active_panel->current_idx;
+        App->active_panel->current_idx++;
+
+        // D. redraw previous line (w/o cursor but with '*')
+        draw_file_line(App->active_panel, offset, old_idx);
+
+        // E. redraw new line (with cursor)
+        draw_file_line(App->active_panel, offset, App->active_panel->current_idx);
+    }
+}
+
+
+void line_up() {
+    if (App->active_panel->current_idx > 0) {
+        int old_idx = App->active_panel->current_idx;
+        App->active_panel->current_idx--;
+
+        // if scrolling, redraw everything; if not, only two lines
+        if (App->active_panel->current_idx < App->active_panel->scroll_offset) {
+            refresh_ui(0);
+        } else {
+            int offset = (App->active_panel == &App->left) ? 1 : *COLUMNS/2+1;
+            draw_file_line(App->active_panel, offset, old_idx);
+            draw_file_line(App->active_panel, offset, App->active_panel->current_idx);
         }
+    }
+}
 
-        // 3. Ctrl+X: Salir
-        if (k == 24) break;
-	/* MODIFICACIÓN PARCIAL en el while(1) de main.c */
-	// 1. Selección con Espacio (Cierre de ciclo de refresco)
-        if (k == ' ') { 
-            int idx = App.active_panel->current_idx;
-            int offset = (App.active_panel == &App.left) ? 1 : 41;
-            
-            // A. Invertir el estado de selección en la memoria
-            App.active_panel->files[idx].seleccionado = !App.active_panel->files[idx].seleccionado;
-            
-            // B. REDIBUJAR el renglón actual inmediatamente para mostrar el '*' [cite: 2026-01-31]
-            // IMPORTANTE: Todavía no hemos movido el current_idx, así que se dibuja con el cursor.
-            draw_file_line(App.active_panel, offset, idx);
 
-            // C. AVANZAR el cursor al siguiente renglón [cite: 2026-01-31]
-            if (App.active_panel->current_idx < App.active_panel->num_files - 1) {
-                int old_idx = App.active_panel->current_idx;
-                App.active_panel->current_idx++;
-                
-                // D. REDIBUJAR el renglón anterior (para que pierda el cursor pero mantenga el '*') [cite: 2026-01-31]
-                draw_file_line(App.active_panel, offset, old_idx);
-                
-                // E. REDIBUJAR el nuevo renglón (para que gane el cursor) [cite: 2026-01-31]
-                draw_file_line(App.active_panel, offset, App.active_panel->current_idx);
-            }
-            continue;
+void line_down() {
+    if (App->active_panel->current_idx < App->active_panel->num_files - 1) {
+        int old_idx = App->active_panel->current_idx;
+        App->active_panel->current_idx++;
+
+        // if scrolling, redraw everything; if not, only two lines
+        if (App->active_panel->current_idx >= App->active_panel->scroll_offset + VISIBLE_ROWS) {
+            refresh_ui(0);
+        } else {
+            int offset = (App->active_panel == &App->left) ? 1 : *COLUMNS/2+1;
+            draw_file_line(App->active_panel, offset, old_idx);
+            draw_file_line(App->active_panel, offset, App->active_panel->current_idx);
         }
+    }
+}
 
-        // 4. Secuencias de Escape (Flechas y Teclas de Función)
-        if (k == 27) {
-            k = wait_key_hw();
-            if (k == '[') {
+
+void page_up() {
+    if (App->active_panel->current_idx >= VISIBLE_ROWS/2)
+        App->active_panel->current_idx -= VISIBLE_ROWS/2;
+    else
+        App->active_panel->current_idx = 0;
+    refresh_ui(0);
+}
+
+
+void page_down() {
+    App->active_panel->current_idx += VISIBLE_ROWS/2;
+    if (App->active_panel->current_idx >= App->active_panel->num_files)
+        App->active_panel->current_idx = App->active_panel->num_files - 1;
+    refresh_ui(0);
+}
+
+
+void first_file() {
+    App->active_panel->current_idx = 0;
+    refresh_ui(0);
+}
+
+
+void last_file() {
+    App->active_panel->current_idx = App->active_panel->num_files - 1;
+    refresh_ui(0);
+}
+
+
+uint8_t yes_no() {
+    char k = wait_key_hw();
+    return (k == 'y' || k == 'Y');
+}
+
+
+void copy() {
+    Panel *dest = (App->active_panel == &App->left) ? &App->right : &App->left;
+    // clear dialog box and ask
+    printf("\x1b[%d;1H\x1b[K COPY SELECTED FILES TO %c:? (Y/N) ", *LINES-1, dest->drive); // pos, erase EOL
+    if ( yes_no() )
+        // Y: copy multiple files
+        exec_multi_copy(App->active_panel, dest);
+    // clear status line
+    printf("\x1b[%d;1H\x1b[K", *LINES-1); // pos, erase EOL
+}
+
+
+void delete() {
+    // clear dialog box and ask
+    printf("\x1b[%d;1H\x1b[K DELETE SELECTED FILES? (Y/N) ", *LINES-1); // pos, erase EOL
+    if ( yes_no() ) {
+        // Y: call master function
+        exec_multi_delete(App->active_panel);
+        load_directory(App->active_panel);
+    }
+    // clear status line
+    printf("\x1b[%d;1H\x1b[K", *LINES-1); // pos, erase EOL
+    refresh_ui(0); // file(s) deleted, refresh active panel
+}
+
+
+int main(int argc, char** argv) {
+
+    App = calloc( 1, sizeof( AppState ) ); // reserve and init heap space
+
+    // handle BDOS errors internally, do not exit
+    bdos( 45, 0xFF ); // set BDOS return error mode 1
+
+    // CP/M Plus has values for screen size in System Control Block
+    if ( bdos( 12, NULL ) == 0x31 ) { // version == CP/M Plus
+        uint8_t scbpb[4] = { 0x1A, 0, 0, 0 }; // SCB parameter block, get col - 1
+        *COLUMNS = bdos( 49, scbpb ) + 1;
+        scbpb[0] = 0x1C; // lines - 1
+        *LINES = bdos( 49, scbpb ) + 1;
+    }
+
+    // cmd line argument "--config" shows address of screen size constants
+    // in zmc.com to help the user to patch with a HEX editor, e.g. BE.
+    while ( --argc ) {
+        ++argv;
+        if ( !strcmp( *argv, "--CONFIG" ) ) {
+            uint16_t value = bdos( 12, NULL );
+            printf( "COLUMNS @ 0x%04X: %d\n", COLUMNS - 0x100, *COLUMNS );
+            printf( "LINES @ 0x%04X: %d\n", LINES - 0x100, *LINES );
+            return 0;
+        } else if ( !strcmp( *argv, "--DEBUG" ) ) {
+            ++DEBUG;
+        } else if ( !strcmp( *argv, "--KEY" ) ) {
+            // test for terminal function keys, exit with <ESC><ESC>
+            uint8_t k;
+            for(;;) {
+                static uint8_t esc = 0;
                 k = wait_key_hw();
-                switch(k) {
-                    /* REEMPLAZAR los casos 'A' y 'B' dentro del switch(k) en main.c */
-		    case 'A': // Arriba
-		        if (App.active_panel->current_idx > 0) {
-		            int old_idx = App.active_panel->current_idx;
-		            App.active_panel->current_idx--;
-		            
-		            // Si hay scroll, redibujamos todo; si no, solo las dos líneas
-		            if (App.active_panel->current_idx < App.active_panel->scroll_offset) {
-		                refresh_ui();
-		            } else {
-		                int offset = (App.active_panel == &App.left) ? 1 : 41;
-		                draw_file_line(App.active_panel, offset, old_idx);
-		                draw_file_line(App.active_panel, offset, App.active_panel->current_idx);
-		            }
-		        }
-		        break;
-		    case 'B': // Abajo
-		        if (App.active_panel->current_idx < App.active_panel->num_files - 1) {
-		            int old_idx = App.active_panel->current_idx;
-		            App.active_panel->current_idx++;
-		            
-		            // Si hay scroll, redibujamos todo; si no, solo las dos líneas
-		            if (App.active_panel->current_idx >= App.active_panel->scroll_offset + 28) {
-		                refresh_ui();
-		            } else {
-		                int offset = (App.active_panel == &App.left) ? 1 : 41;
-		                draw_file_line(App.active_panel, offset, old_idx);
-		                draw_file_line(App.active_panel, offset, App.active_panel->current_idx);
-		            }
-		        }
-		        break;
-		    case '5': // Page Up (ESC [ 5 ~)
-		            wait_key_hw(); // Consumir ~
-		            if (App.active_panel->current_idx >= 18)
-		                App.active_panel->current_idx -= 18;
-		            else
-		                App.active_panel->current_idx = 0;
-		            refresh_ui();
-		            break;
-		    case '6': // Page Down (ESC [ 6 ~)
-		            wait_key_hw(); // Consumir ~
-		            App.active_panel->current_idx += 18;
-		            if (App.active_panel->current_idx >= App.active_panel->num_files)
-		                App.active_panel->current_idx = App.active_panel->num_files - 1;
-		            refresh_ui();
-		            break;
-                    case '1': // F5 (15~) y F8 (19~)
-                        k = wait_key_hw();
-                        
-                        if (k == '5') { // F5 Detectado
-                            wait_key_hw(); // Consumir ~
-                            Panel *dest = (App.active_panel == &App.left) ? &App.right : &App.left;
-                            
-                            // Limpiar línea de diálogo y preguntar
-                            printf("\x1b[31;1H\x1b[K COPIAR A %c:? (S/N) ", dest->drive);
-                            
-                            k = wait_key_hw();
-                            if (k == 's' || k == 'S') {
-                                // Ahora sí: Copia múltiple habilitada
-                                ejecutar_copia_multiple(App.active_panel, dest);
-                            }
-                            // Limpiar rastro al terminar
-                            printf("\x1b[31;1H\x1b[K"); 
-                        } 
-                        else if (k == '9') { // F8 Detectado
-                            wait_key_hw(); // Consumir ~
-                            
-                            // Limpiar línea de diálogo y preguntar
-                            printf("\x1b[31;1H\x1b[K BORRAR SELECCIONADOS? (S/N) ");
-                            
-                            k = wait_key_hw();
-                            if (k == 's' || k == 'S') {
-                                // Llamamos a la nueva función maestra [cite: 2026-01-31]
-                                ejecutar_borrado_multiple(App.active_panel);
-                                load_directory(App.active_panel);
-                            }
-                            // Limpiar rastro al terminar
-                            printf("\x1b[31;1H\x1b[K");
-                        }
-                        refresh_ui();
-                        break;
-                }
-            } else if (k == 'O') {
-	        k = wait_key_hw();
-	        if (k == 'P') { // F1: AYUDA
-	            printf("\x1b[31;1H\x1b[44;37m AYUDA: ZMC v1.0 - Volney Torres \x1b[0m");
-	            wait_key_hw();
-	            refresh_ui();
-	        }
-	        else if (k == 'R') { // F3: VIEW
-	            view_file(App.active_panel);
-                    printf("\x1b[2J");   // Limpieza total de la pantalla (Borra el texto del TYPE)
-	            printf("\x1b[?25l"); // Asegurar que el cursor siga oculto al volver
-	            refresh_ui();
-	        } 
-                /* Dentro de main.c */
-		else if (k == 'S') { // F4: DUMP
-		    dump_file(App.active_panel);
-		    printf("\x1b[2J\x1b[?25l"); // Limpieza y ocultar cursor
-		    refresh_ui();
-		}
+                printf( "0x%02X  ", k );
+                if ( k == ESC )
+                    puts( "ESC" );
+                else if (k < ESC )
+                    printf( "^%c\n", k + '@');
+                else    // show printable chars, else '.'
+                    printf( "%c\n", k >= ' ' && k < 128 ? k : '.' );
+                if ( esc && k == ESC ) // <ESC><ESC>
+                    return 0;
+                esc = k == ESC; // remember <ESC>
             }
         }
     }
-    printf("\x1b[?25h"); // Volver a mostrar el cursor antes de salir
-    printf("\x1b[0m\x1b[2J\x1b[H Saliendo de ZMC...\n");
+    App->left.drive = '@'; App->left.active = 1; // current drive
+    App->right.drive = '@'; App->right.active = 0; // current drive
+    App->active_panel = &App->left;
+
+    load_directory(&App->left);
+    load_directory(&App->right);
+    printf("\x1b[?25l\x1b[2J\x1b[H"); // hide cursor, clear, home
+    refresh_ui( 1 ); // refresh/init both panels
+
+    uint8_t loop = 1;
+    uint8_t k;
+    while( loop ) { // terminal key input loop
+        k = wait_key_hw();
+
+        if (k == 0x09) { // TAB: OTHER_PANEL
+            other_panel();
+        } else if (k == ' ' || k == 'V'-'@') { // ' ' or ^V -> SELECT
+            select_file();
+        } else if ( ( k >= 'a' && k <= 'p' ) || ( k >= 'A' && k <= 'P' ) ) {
+            change_drive( k ); // "A:" - "P:" -> CHANGE_DRIVE
+        } else if (k == ' ') { // ' ' -> SELECT
+            select_file();
+        } else if ( k == 'E'-'@' ) { // ^E
+            line_up();
+        } else if ( k == 'X'-'@' ) { // ^X
+            line_down();
+        } else if ( k == 'R'-'@' ) { // ^R
+            page_up();
+        } else if ( k == 'C'-'@' ) { // ^C
+            page_down();
+        } else if ( k == ESC ) { // ESC sequences
+            k = wait_key_hw();
+            if (k == ESC ) { // <ESC><ESC>
+                break;
+            } else if (k == '[') { // "<ESC>["
+                k = wait_key_hw();
+                if ( k == 'A' ) { // "<ESC>[A" LINE_UP
+                    line_up();
+                } else if ( k == 'B' ) { // "<ESC>[B" LINE_DOWN
+                    line_down();
+                } else if ( k == '5' && wait_key_hw() == '~' ) { // "<ESC>[5~" PAGE_UP
+                    page_up();
+                } else if ( k == '6' && wait_key_hw() == '~' ) { // "<ESC>[6~" PAGE_DOWN
+                    page_down();
+                } else if ( k == 'H' ) { // <HOME> = "<ESC>[H"
+                    first_file();
+                } else if ( k == 'F' ) { // <END> = "<ESC>[F"
+                    last_file();
+                } else if ( k == '1' ) { // F5 = "<ESC>[15~" / F8 = "<ESC>[19~"
+                    k = wait_key_hw();
+                    if (k == '5' && wait_key_hw() == '~') { // F5 = "<ESC>[15~" COPY
+                        copy();
+                    } else if (k == '9' && wait_key_hw() == '~') { // F8 = "<ESC>[19~" DELETE
+                        delete();
+                    }
+                    refresh_ui(1);
+                } else if ( k == '2' ) {
+                    k = wait_key_hw();
+                    if ( k == '~' ) { // <INSERT> = "<ESC>[2~"
+                        select_file();
+                    } else if (k == 1 && wait_key_hw() == '~') { // F10 = "<ESC>[21~"
+                        loop = 0; // ready, leave loop
+                    }
+                }
+            } else if (k == 'O') { // <ESC>O ...
+	        k = wait_key_hw();
+	        if (k == 'P') { // F1 = "<ESC>OP" HELP
+	            printf("\x1b[%d;1H\x1b[7m ZMC v1.2 - Volney Torres \x1b[0m", *LINES-1);
+	            wait_key_hw(); // wait for any key
+                    printf("\x1b[%d;1H\x1b[K", *LINES-1); // pos, erase EOL
+	        }
+	        else if (k == 'R') { // F3 = "<ESC>OR" VIEW
+	            view_file(App->active_panel);
+		    CLRSCR; // clear screen, hide cursor
+	        }
+		else if (k == 'S') { // F4 = "<ESC>OS" DUMP
+		    dump_file(App->active_panel);
+		    CLRSCR; // clear screen, hide cursor
+		}
+                refresh_ui(1);
+            }
+        }
+    }
+    printf("\x1b[?25h"); // show cursor
+    printf("\x1b[0m\x1b[2J\x1b[H"); // normal, cls, home
     return 0;
 }
+
