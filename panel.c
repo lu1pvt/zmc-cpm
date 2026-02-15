@@ -22,7 +22,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 void draw_frame(int x, int y, int w, int h, char *title) {
     int i;
-    // printf("\x1b[0;37m\x1b[%d;%dH+", y, x);
     printf("\x1b[%d;%dH+", y, x);
     for(i=0; i<w-2; i++) putchar('-');
     putchar('+');
@@ -36,15 +35,15 @@ void draw_frame(int x, int y, int w, int h, char *title) {
     putchar('+');
 }
 
-
 void draw_file_info( Panel *p, int f_idx ) {
     if (p->active && f_idx == p->current_idx)
-        INVERS;
-    printf("%c%-12s %4uK ",
-        p->files[f_idx].seleccionado ? '*' : ' ',
-        p->files[f_idx].name,
-        p->files[f_idx].size_kb
-    );
+        set_invers();
+
+    printf("%c", p->files[f_idx].selected ? '*' : ' ' );
+    print_cpm_name( p->files[f_idx].cpmname );
+    // size calculation does not yet work
+    // printf(" %4uK", p->files[f_idx].size_kb);
+
     if (p->files[f_idx].date) { // date and time defined
         printf(" %04d-%02d-%02d %02X:%02X",
             p->files[f_idx].date,
@@ -56,9 +55,8 @@ void draw_file_info( Panel *p, int f_idx ) {
     } else {
         printf("                 " );
     }
-
     if (p->active && f_idx == p->current_idx)
-        NORMAL;
+        set_normal();
 }
 
 

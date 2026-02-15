@@ -24,18 +24,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 #include "zmc.h"
 
 
-/* CP/M directory entry (32 bytes) */
-typedef struct cpm_dir {
-    unsigned char drive;
-    char name[8];
-    char ext[3];
-    unsigned char extent;
-    unsigned char s1, s2;
-    unsigned char rc;
-    unsigned char map[16];
-} cpm_dir;
-
-
 uint8_t fcb_src[36];
 uint8_t fcb_dst[36];
 
@@ -44,32 +32,13 @@ void prepare_fcb( char *name_ptr, Panel *src, Panel *dst ) {
 // setup one or two FCBs for reading, copying or deleting
     if ( src ) {
         memset(fcb_src, 0, 36);
-        fcb_src[0] = (src->drive - 'A') + 1;
-        memset(&fcb_src[1], ' ', 11);
+        *fcb_src = (src->drive - 'A') + 1;
+        memcpy(fcb_src+1, name_ptr, 11);
     }
     if ( dst ) {
         memset(fcb_dst, 0, 36);
-        fcb_dst[0] = (dst->drive - 'A') + 1;
-        memset(&fcb_dst[1], ' ', 11);
-    }
-    // copy NAME to the FCB(s)
-    for(uint8_t i = 0; i < 8 && name_ptr[i] != '.' && name_ptr[i] != '\0'; ++i) {
-        if ( src )
-            fcb_src[1+i] = name_ptr[i];
-        if ( dst )
-            fcb_dst[1+i] = name_ptr[i];
-    }
-    // separate NAME and copy EXT (e.g. "NAME.EXT")
-    while(*name_ptr && *name_ptr != '.')
-        name_ptr++;
-    if(*name_ptr == '.') {
-        name_ptr++;
-        for(uint8_t i = 0; i < 3 && name_ptr[i] != '\0'; i++) {
-        if ( src )
-            fcb_src[9+i] = name_ptr[i];
-        if ( dst )
-            fcb_dst[9+i] = name_ptr[i];
-        }
+        *fcb_dst = (dst->drive - 'A') + 1;
+        memcpy(fcb_dst+1, name_ptr, 11);
     }
 }
 
@@ -128,7 +97,7 @@ void days_to_date( void *date ) {
 // Three-way compare function for the name field of FileEntry used by qsort
 static int fileNameCompare(const void* a, const void* b) {
     // setting up rules for comparison
-    return strcmp( ((const FileEntry*)a)->name, ((const FileEntry*)b)->name );
+    return strcmp( ((const FileEntry*)a)->cpmname, ((const FileEntry*)b)->cpmname );
 }
 
 
@@ -161,21 +130,25 @@ void load_directory(Panel *p) {
         dir_entry = (cpm_dir *)(0x80 + (result * 32));
 
         /* only if not erased (0xE5) */
-        if (dir_entry->drive != 0xE5) {
-            char clean_name[9], clean_ext[4];
+        if (dir_entry->user != 0xE5) {
 
-            // name.ext (w/o attribute bits)
-            for(int i=0; i<8; i++) clean_name[i] = dir_entry->name[i] & 0x7F;
-            clean_name[8] = '\0';
-            for(int i=0; i<3; i++) clean_ext[i] = dir_entry->ext[i] & 0x7F;
-            clean_ext[3] = '\0';
-            // format for panel display (e.g.: "COMMAND COM" -> "COMMAND.COM")
-            sprintf(p->files[count].name, "%s.%s", strtok(clean_name, " "), clean_ext);
+            p->files[count].selected = 0;
+            memcpy(p->files[count].cpmname, dir_entry->name, 11 );
+            p->files[count].cpmname[11] = '\0';
 
-            // file size (RC * 128 bytes / 1024)
-            p->files[count].size_kb = (dir_entry->rc * 128) / 1024;
-            p->files[count].seleccionado = 0;
-            if (p->files[count].size_kb == 0 && dir_entry->rc > 0) p->files[count].size_kb = 1;
+            // -----------------------------------------------------------------------------
+            // Calculate file size
+            // File size in KB (number of all file records RC * 128 bytes / 1024)
+            // when multiple extents exist, F_SFIRST / F_SNEXT reports only the 1st found
+            // regardless of its number. Therefor this calculation does not work.
+            // -----------------------------------------------------------------------------
+            //
+            p->files[count].size_kb = (dir_entry->rc * 128) / 1024; // size of THIS extent
+            // Ho-Ro: what shall this line do?
+            // if (p->files[count].size_kb == 0 && dir_entry->rc > 0) p->files[count].size_kb = 1;
+            p->files[count].size_kb += dir_entry->extent * 16;
+            //
+            // -----------------------------------------------------------------------------
 
             // handle the CP/M3 date/time entry
             // check if date time info exists in the 4th 32 byte directory entry
@@ -187,8 +160,17 @@ void load_directory(Panel *p) {
                 days_to_date( &(p->files[count].date) );
             } else { // no date/time file info
                 p->files[count].date = 0;
+                p->files[count].month = 0;
+                p->files[count].day = 0;
                 p->files[count].hour = 0;
                 p->files[count].minute = 0;
+            }
+            if ( DEBUG ) {
+                printf( "%d:", dir_entry->user );
+                print_cpm_name( p->files[count].cpmname );
+                printf( "  %d %d %d %d  %dK\n",
+                    dir_entry->extent, dir_entry->s1, dir_entry->s2, dir_entry->rc,
+                    p->files[count].size_kb );
             }
             count++;
         }
@@ -199,13 +181,15 @@ void load_directory(Panel *p) {
     p->num_files = count;
     // lib function quick sort, sort file names
     qsort((void *)p->files, p->num_files, sizeof(FileEntry), fileNameCompare);
+    if ( DEBUG )
+        exit( DEBUG );
 }
 
 
 // Delete the selected file(s) on active panel
 int delete_file(Panel *p) {
     if (p->num_files == 0) return -1;
-    prepare_fcb(p->files[p->current_idx].name, p, NULL );
+    prepare_fcb(p->files[p->current_idx].cpmname, p, NULL );
     return bdos(19, fcb_src); // BDOS function 19 (F_DELETE) - delete file
 }
 
@@ -215,7 +199,7 @@ int copy_file(Panel *src, Panel *dst) {
     // any files to copy?
     if (src->num_files == 0) return -1;
     // fill the FCBs
-    prepare_fcb(src->files[src->current_idx].name, src, dst);
+    prepare_fcb(src->files[src->current_idx].cpmname, src, dst);
     // prepare transfer
     bdos(19, fcb_dst); // BDOS function 19 (F_DELETE) - delete file
     if (bdos(15, fcb_src) == 255) return -2; // BDOS function 15 - Open directory
@@ -240,17 +224,16 @@ void show_footer( const char *action, const char *file_name ) {
 }
 
 
-/* FUNCIÓN VIEW CORREGIDA: Con paginación, salida por ESC y llaves balanceadas */
 void view_file(Panel *p) {
     // unsigned char fcb[36];
     int i;
     int line_count = -1;
-    char *name_ptr = p->files[p->current_idx].name;
+    char *name_ptr = p->files[p->current_idx].cpmname;
     char *temp_ptr;
 
     if (p->num_files == 0) return;
     show_header();
-    prepare_fcb(p->files[p->current_idx].name, p, NULL);
+    prepare_fcb(p->files[p->current_idx].cpmname, p, NULL);
     // open and read
     if (bdos(15, fcb_src) != 255) { // BDOS function 15 - Open directory
         while (bdos(20, fcb_src) == 0) { // BDOS function 20 (F_READ) - read next record
@@ -285,13 +268,12 @@ end_of_file:
 void dump_file(Panel *p) {
     int i, j, line_count = -1;
     long address = 0;
-    char *name_ptr = p->files[p->current_idx].name;
+    char *name_ptr = p->files[p->current_idx].cpmname;
 
     if (p->num_files == 0) return;
 
-    /* 1. Limpiar pantalla para el visor */
     show_header();
-    prepare_fcb(p->files[p->current_idx].name, p, NULL);
+    prepare_fcb(p->files[p->current_idx].cpmname, p, NULL);
 
     if (bdos(15, fcb_src) != 255) { // BDOS function 15 - Open directory
         while (bdos(20, fcb_src) == 0) { // BDOS function 20 (F_READ) - read next record
@@ -329,7 +311,7 @@ void dump_file(Panel *p) {
 
 // copy a specific file by its index
 int copy_file_by_index(Panel *src, Panel *dst, uint16_t idx) {
-    prepare_fcb(src->files[idx].name, src, dst);
+    prepare_fcb(src->files[idx].cpmname, src, dst);
     bdos(19, fcb_dst); // BDOS function 19 (F_DELETE) - delete file
     if (bdos(15, fcb_src) == 255) return -1; // BDOS function 15 - Open directory
     if (bdos(22, fcb_dst) == 255) return -1; // BDOS function 22 (F_MAKE) - create file
@@ -345,23 +327,23 @@ void exec_multi_copy(Panel *src, Panel *dst) {
     int i, marcados = 0, procesados = 0;
 
     for (i = 0; i < src->num_files; i++) {
-        if (src->files[i].seleccionado) marcados++;
+        if (src->files[i].selected) marcados++;
     }
 
     if (marcados == 0) {
         printf("\x1b[%d;1H\x1b[7m Copying: %s... \x1b[0m",
-               SCREEN_HEIGHT-1, src->files[src->current_idx].name);
+               SCREEN_HEIGHT-1, src->files[src->current_idx].cpmname);
         copy_file_by_index(src, dst, src->current_idx);
     } else {
         for (i = 0; i < src->num_files; i++) {
-            if (src->files[i].seleccionado) {
+            if (src->files[i].selected) {
                 procesados++;
                 printf("\x1b[%d;1H\x1b[7m [%d/%d] Copying: %s \x1b[0m",
-                       SCREEN_HEIGHT-1, procesados, marcados, src->files[i].name);
+                       SCREEN_HEIGHT-1, procesados, marcados, src->files[i].cpmname);
 
                 // USAR EL NOMBRE CORRECTO AQUÍ:
                 copy_file_by_index(src, dst, i);
-                src->files[i].seleccionado = 0; 
+                src->files[i].selected = 0;
             }
         }
     }
@@ -373,23 +355,23 @@ void exec_multi_delete(Panel *p) {
     int i, marcados = 0, procesados = 0;
     // count number of selections
     for (i = 0; i < p->num_files; i++) {
-        if (p->files[i].seleccionado) marcados++;
+        if (p->files[i].selected) marcados++;
     }
     if (marcados == 0) {
         // if none selected, delete  the current file (original functionality)
-        printf("\x1b[%d;1H\x1b[K Deleting: %s... ", SCREEN_HEIGHT-1, p->files[p->current_idx].name);
+        printf("\x1b[%d;1H\x1b[K Deleting: %s... ", SCREEN_HEIGHT-1, p->files[p->current_idx].cpmname);
         delete_file(p);
     } else {
         // batch deletion
         for (i = 0; i < p->num_files; i++) {
-            if (p->files[i].seleccionado) {
+            if (p->files[i].selected) {
                 procesados++;
                 printf("\x1b[%d;1H\x1b[K [%d/%d] Deleting: %s ", // pos, erase to EOL
-                       SCREEN_HEIGHT-1,  procesados, marcados, p->files[i].name);
+                       SCREEN_HEIGHT-1,  procesados, marcados, p->files[i].cpmname);
 
-                prepare_fcb(p->files[i].name, p, NULL);
+                prepare_fcb(p->files[i].cpmname, p, NULL);
                 bdos(19, fcb_src); // BDOS function 19 (F_DELETE) - delete file
-                p->files[i].seleccionado = 0; 
+                p->files[i].selected = 0;
             }
         }
     }

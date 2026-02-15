@@ -83,7 +83,7 @@ void select_file() {
     int offset = (App->active_panel == &App->left) ? 1 : *COLUMNS/2+1;
 
     // A. invert the selection state in memory
-    App->active_panel->files[idx].seleccionado = !App->active_panel->files[idx].seleccionado;
+    App->active_panel->files[idx].selected = !App->active_panel->files[idx].selected;
 
     // B. redraw current line to show '*'
     // IMPORTANT: current_idx was not changed, line is drawn with cursor.
@@ -201,6 +201,10 @@ void delete() {
 int main(int argc, char** argv) {
 
     App = calloc( 1, sizeof( AppState ) ); // reserve and init heap space
+    if ( App == NULL ) {
+        fprintf( stderr, "Not enough memory!\n" );
+        return -1;
+    }
 
     // handle BDOS errors internally, do not exit
     bdos( 45, 0xFF ); // set BDOS return error mode 1
@@ -259,6 +263,14 @@ int main(int argc, char** argv) {
 
         if (k == 0x09) { // TAB: OTHER_PANEL
             other_panel();
+        } else if ( k == 'v' || k == 'V' ) { // View ASCII
+            view_file(App->active_panel);
+            clrscr(); // clear screen, hide cursor
+            refresh_ui(1);
+        } else if ( k == 'x' || k == 'X' ) { // Dump HEX
+            dump_file(App->active_panel);
+            clrscr(); // clear screen, hide cursor
+            refresh_ui(1);
         } else if (k == ' ' || k == 'V'-'@') { // ' ' or ^V -> SELECT
             select_file();
         } else if ( ( k >= 'a' && k <= 'p' ) || ( k >= 'A' && k <= 'P' ) ) {
@@ -316,13 +328,14 @@ int main(int argc, char** argv) {
 	        }
 	        else if (k == 'R') { // F3 = "<ESC>OR" VIEW
 	            view_file(App->active_panel);
-		    CLRSCR; // clear screen, hide cursor
+		    clrscr(); // clear screen, hide cursor
+                    refresh_ui(1);
 	        }
 		else if (k == 'S') { // F4 = "<ESC>OS" DUMP
 		    dump_file(App->active_panel);
-		    CLRSCR; // clear screen, hide cursor
+		    clrscr(); // clear screen, hide cursor
+                    refresh_ui(1);
 		}
-                refresh_ui(1);
             }
         }
     }
