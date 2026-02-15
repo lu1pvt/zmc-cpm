@@ -21,6 +21,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 #include <stdlib.h>
 #include <string.h>
 #include <cpm.h>
+#include <sys/stat.h>
+
 #include "zmc.h"
 
 
@@ -103,7 +105,6 @@ static int fileNameCompare(const void* a, const void* b) {
 
 void load_directory(Panel *p) {
     cpm_dir *dir_entry;
-    // unsigned char fcb[36];
     uint16_t count = 0;
     uint8_t result;
 
@@ -131,10 +132,19 @@ void load_directory(Panel *p) {
 
         /* only if not erased (0xE5) */
         if (dir_entry->user != 0xE5) {
+        char clean_name[9], clean_ext[4];
 
+            // clean attribute bits and spaces
+            for(int i=0; i<8; i++) clean_name[i] = dir_entry->name[i] & 0x7F;
+            clean_name[8] = '\0';
+            for(int i=0; i<3; i++) clean_ext[i] = dir_entry->ext[i] & 0x7F;
+            clean_ext[3] = '\0';
+            // save attributes
+            memcpy( p->files[count].attrib, dir_entry->ext, 3 );
+
+            // Format (e.g.: "NAME    EXT" -> "NAME.EXT")
+            sprintf(p->files[count].cpmname, "%s.%s", strtok(clean_name, " "), clean_ext);
             p->files[count].selected = 0;
-            memcpy(p->files[count].cpmname, dir_entry->name, 11 );
-            p->files[count].cpmname[11] = '\0';
 
             // -----------------------------------------------------------------------------
             // Calculate file size
@@ -143,10 +153,10 @@ void load_directory(Panel *p) {
             // regardless of its number. Therefor this calculation does not work.
             // -----------------------------------------------------------------------------
             //
-            p->files[count].size_kb = (dir_entry->rc * 128) / 1024; // size of THIS extent
+            // p->files[count].size_kb = (dir_entry->rc * 128) / 1024; // size of THIS extent
             // Ho-Ro: what shall this line do?
             // if (p->files[count].size_kb == 0 && dir_entry->rc > 0) p->files[count].size_kb = 1;
-            p->files[count].size_kb += dir_entry->extent * 16;
+            // p->files[count].size_kb += dir_entry->extent * 16;
             //
             // -----------------------------------------------------------------------------
 
@@ -165,13 +175,6 @@ void load_directory(Panel *p) {
                 p->files[count].hour = 0;
                 p->files[count].minute = 0;
             }
-            if ( DEBUG ) {
-                printf( "%d:", dir_entry->user );
-                print_cpm_name( p->files[count].cpmname );
-                printf( "  %d %d %d %d  %dK\n",
-                    dir_entry->extent, dir_entry->s1, dir_entry->s2, dir_entry->rc,
-                    p->files[count].size_kb );
-            }
             count++;
         }
 
@@ -180,9 +183,12 @@ void load_directory(Panel *p) {
     }
     p->num_files = count;
     // lib function quick sort, sort file names
-    qsort((void *)p->files, p->num_files, sizeof(FileEntry), fileNameCompare);
-    if ( DEBUG )
-        exit( DEBUG );
+    qsort((void *)p->files, count, sizeof(FileEntry), fileNameCompare);
+    // query file size(s), round up to KB
+    struct stat statbuf;
+    for ( uint16_t idx = 0; idx < count; ++idx )
+        if ( stat( p->files[idx].cpmname, &statbuf ) != -1)
+            p->files[idx].size_kb = (statbuf.st_size + 1023L)/1024L;
 }
 
 

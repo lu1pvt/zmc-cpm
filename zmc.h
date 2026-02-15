@@ -232,7 +232,8 @@ typedef struct { // CP/M Plus directory info for 3 files
 
 
 typedef struct {
-    uint8_t cpmname[12]; // "NAME    EXT\0"
+    char cpmname[FILENAME_LEN]; // "FILENAME.EXT\0"
+    uint8_t attrib[3];
     uint16_t size_kb;
     uint8_t selected;  // 0 = No, 1 = Yes
     uint16_t date; // days since 31.12.1977 or year
@@ -262,7 +263,7 @@ typedef struct {
 void set_invers( void );
 void set_normal( void );
 void clrscr( void );
-void print_cpm_name( char *cn );
+void print_cpm_attrib( uint8_t *ca );
 void draw_panel(Panel *p, uint8_t x_offset);
 void load_directory(Panel *p);
 uint8_t wait_key_hw(void);

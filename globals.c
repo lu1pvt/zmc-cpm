@@ -27,31 +27,11 @@ void clrscr() {
     printf("\x1b[2J\x1b[?25l");
 }
 
-
-void print_cpm_name (uint8_t *cpmname) {
-    uint8_t *cn = cpmname;
-    int8_t j = 0;
-    for ( uint8_t i=0; i<8; ++i, ++cn )
-        if (*cn != ' ' ) {
-            putchar( *cn & 0x7F );
-            ++j;
-        }
-    if ( *cn != ' ' ) {
-        putchar( '.' );
-        ++j;
-    }
-    for ( uint8_t i=0; i<3; ++i, ++cn )
-        if (*cn != ' ' ) {
-            putchar( *cn & 0x7F );
-            ++j;
-        }
-    while ( ++j <= 12 )
-        putchar( ' ' );
+void print_cpm_attrib( uint8_t *ca) {
     // show file attributes
-    cn = cpmname+8;
-    printf( "  %c%c%c  ",
-            *cn++ > 0x7F ? 'R' : ' ', // READ ONLY
-            *cn++ > 0x7F ? 'S' : ' ', // SYSTEM
-            *cn++ > 0x7F ? 'B' : ' '  // file was BACKED UP
+    printf( "%c%c%c",
+            *ca++ > 0x7F ? 'R' : ' ', // READ ONLY
+            *ca++ > 0x7F ? 'S' : ' ', // SYSTEM
+            *ca++ > 0x7F ? 'B' : ' '  // file was BACKED UP
     );
 }

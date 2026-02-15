@@ -39,10 +39,12 @@ void draw_file_info( Panel *p, int f_idx ) {
     if (p->active && f_idx == p->current_idx)
         set_invers();
 
-    printf("%c", p->files[f_idx].selected ? '*' : ' ' );
-    print_cpm_name( p->files[f_idx].cpmname );
+    printf("%c%-12s  %4uK", p->files[f_idx].selected ? '*' : ' ',
+           p->files[f_idx].cpmname,
+           p->files[f_idx].size_kb
+           );
     // size calculation does not yet work
-    // printf(" %4uK", p->files[f_idx].size_kb);
+    // printf("%c%-12s  %4uK", p->files[f_idx].cpmname, p->files[f_idx].size_kb);
 
     if (p->files[f_idx].date) { // date and time defined
         printf(" %04d-%02d-%02d %02X:%02X",
