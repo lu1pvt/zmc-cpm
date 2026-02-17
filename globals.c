@@ -8,10 +8,12 @@ uint8_t CONFIG[] = { // 80x40
 };
 
 uint8_t DEBUG = 0;
+uint8_t DEVEL = 0;
 
 const uint8_t *COLUMNS = CONFIG;
 const uint8_t *LINES = CONFIG+1;
 
+uint16_t MAX_FILES = 0;
 
 void set_invers() {
     printf("\x1b[7m");

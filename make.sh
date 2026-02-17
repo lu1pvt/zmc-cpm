@@ -4,7 +4,8 @@
 # -vn: no verbosity
 # -create-app: Build a .COM file
 
-zcc +cpm -O3 -vn -DAMALLOC main.c panel.c operations.c globals.c -o zmc.com -create-app
+zcc +cpm -O3 -vn -DAMALLOC -pragma-define:CRT_STACK_SIZE=1024 -Wall \
+main.c panel.c operations.c globals.c -o zmc.com -create-app
 
 if [ $? -eq 0 ]; then
     echo "✅ Build OK: ZMC.COM generated."

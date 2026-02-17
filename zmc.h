@@ -20,7 +20,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 #include <stdint.h>
 
-#define MAX_FILES 256
 #define FILENAME_LEN 13
 #define SCREEN_HEIGHT (*LINES) // 32
 #define PANEL_WIDTH (*COLUMNS/2) //40
@@ -36,6 +35,7 @@ extern uint8_t *LINES;
 extern uint8_t *COLUMNS;
 
 extern uint8_t DEBUG;
+extern uint8_t DEVEL;
 
 /* https://www.seasip.info/Cpm/format22.html
  *
@@ -201,8 +201,8 @@ extern uint8_t DEBUG;
 typedef struct cpm_dir {
     uint8_t user;
     uint8_t name[8]; // F1..F8, hi bit can be user flag
-    uint8_t ext[3];  // T1..T3, hi bits are system flags
-    uint8_t extent;
+    uint8_t type[3];  // T1..T3, hi bits are system flags
+    uint8_t ex;
     uint8_t s1, s2;
     uint8_t rc;
     uint8_t map[16];
@@ -231,12 +231,17 @@ typedef struct { // CP/M Plus directory info for 3 files
 } date_time_dir;
 
 
+#define B_SEL 0x80
+#define B_ARCH 0x04
+#define B_SYS 0x02
+#define B_RO 0x01
+
 typedef struct {
     char cpmname[FILENAME_LEN]; // "FILENAME.EXT\0"
-    uint8_t attrib[3];
-    uint16_t size_kb;
-    uint8_t selected;  // 0 = No, 1 = Yes
-    uint16_t date; // days since 31.12.1977 or year
+    uint8_t attrib; // sel,0,0,0,0,A,S,R
+    uint16_t extent; // extent number, becomes total number of records
+    uint8_t rc; // number of records
+    uint16_t date; // days since 31.12.1977, becomes year
     uint8_t month;
     uint8_t day;
     uint8_t hour;
@@ -244,7 +249,7 @@ typedef struct {
 } FileEntry;
 
 typedef struct {
-    FileEntry files[MAX_FILES];
+    FileEntry *files;
     uint16_t num_files;
     uint16_t current_idx;
     uint16_t scroll_offset;
@@ -259,6 +264,8 @@ typedef struct {
     Panel *active_panel;
 } AppState;
 
+
+extern uint16_t MAX_FILES;
 
 void set_invers( void );
 void set_normal( void );

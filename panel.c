@@ -26,10 +26,12 @@ void draw_frame(int x, int y, int w, int h, char *title) {
     for(i=0; i<w-2; i++) putchar('-');
     putchar('+');
     printf("\x1b[%d;%dH[ %s ]", y, x + 2, title);
+
     for(i=1; i<h-1; i++) {
         printf("\x1b[%d;%dH|", y + i, x);
         printf("\x1b[%d;%dH|", y + i, x + w - 1);
     }
+
     printf("\x1b[%d;%dH+", y + h - 1, x);
     for(i=0; i<w-2; i++) putchar('-');
     putchar('+');
@@ -39,15 +41,26 @@ void draw_file_info( Panel *p, int f_idx ) {
     if (p->active && f_idx == p->current_idx)
         set_invers();
 
-    printf("%c%-12s  %4uK", p->files[f_idx].selected ? '*' : ' ',
+
+    printf("%c%-12s %c%c%c",
+           p->files[f_idx].attrib & 0x80 ? '*' : ' ',
            p->files[f_idx].cpmname,
-           p->files[f_idx].size_kb
-           );
-    // size calculation does not yet work
-    // printf("%c%-12s  %4uK", p->files[f_idx].cpmname, p->files[f_idx].size_kb);
+           p->files[f_idx].attrib & 0x01 ? 'R' : ' ',
+           p->files[f_idx].attrib & 0x02 ? 'S' : ' ',
+           p->files[f_idx].attrib & 0x04 ? 'A' : ' '
+    );
+
+#if 0
+    printf( "%5d ", p->files[f_idx].extent );
+#else
+    if ( p->files[f_idx].extent < 89)
+        printf( "%5u ", p->files[f_idx].extent << 7 );
+    else
+        printf( "%4uK ", (uint16_t)(p->files[f_idx].extent + 7) >> 3 );
+#endif
 
     if (p->files[f_idx].date) { // date and time defined
-        printf(" %04d-%02d-%02d %02X:%02X",
+        printf("%04d%02d%02d %02X:%02X",
             p->files[f_idx].date,
             p->files[f_idx].month,
             p->files[f_idx].day,
@@ -55,7 +68,7 @@ void draw_file_info( Panel *p, int f_idx ) {
             p->files[f_idx].minute
         );
     } else {
-        printf("                 " );
+        printf("               " );
     }
     if (p->active && f_idx == p->current_idx)
         set_normal();
@@ -83,7 +96,7 @@ void draw_panel(Panel *p, uint8_t x_offset) {
         if (f_idx < p->num_files)
             draw_file_info( p, f_idx );
         else
-            printf("                                     ");
+            printf("                                      ");
     }
 }
 

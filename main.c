@@ -22,8 +22,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 #include <malloc.h>
 #include "zmc.h"
 
-AppState *App = NULL; // will be malloc'd in main
-
+AppState App;
 
 unsigned char wait_key_hw() {
 #asm
@@ -40,30 +39,30 @@ loop_bdos_kbd:
 
 
 void refresh_ui(unsigned char all) {
-    if ( all || App->left.active )
-        draw_panel(&App->left, 1);
-    if ( all || App->right.active )
-        draw_panel(&App->right, *COLUMNS/2+1);
-    printf("\x1b[%d;1H\x1b[0m%c> ", *LINES - 1, App->active_panel->drive);
+    if ( all || App.left.active )
+        draw_panel(&App.left, 1);
+    if ( all || App.right.active )
+        draw_panel(&App.right, *COLUMNS/2+1);
+    printf("\x1b[%d;1H\x1b[0m%c> ", *LINES - 1, App.active_panel->drive);
     printf("\x1b[%d;1H\x1b[7m| A: - P: | TAB:Sw | F1:Help | F3:View | F4:Dump | F5:Copy | F8:Del | F10:Exit |\x1b[0m", *LINES);
 }
 
 
 void other_panel() {
-    int old_left_idx = App->left.current_idx;
-    int old_right_idx = App->right.current_idx;
+    int old_left_idx = App.left.current_idx;
+    int old_right_idx = App.right.current_idx;
 
     // change focus
-    App->left.active = !App->left.active;
-    App->right.active = !App->right.active;
-    App->active_panel = App->left.active ? &App->left : &App->right;
+    App.left.active = !App.left.active;
+    App.right.active = !App.right.active;
+    App.active_panel = App.left.active ? &App.left : &App.right;
 
     // chirurgical update: refresh only the lines with cursors
-    draw_file_line(&App->left, 1, old_left_idx);
-    draw_file_line(&App->right, *COLUMNS/2+1, old_right_idx);
+    draw_file_line(&App.left, 1, old_left_idx);
+    draw_file_line(&App.right, *COLUMNS/2+1, old_right_idx);
 
     // ... and the prompt
-    printf("\x1b[%d;1H\x1b[m%c> \x1b[K", *LINES-1, App->active_panel->drive); // pos, normal. clr eol
+    printf("\x1b[%d;1H\x1b[m%c> \x1b[K", *LINES-1, App.active_panel->drive); // pos, normal. clr eol
 }
 
 
@@ -71,97 +70,97 @@ void change_drive( char k ) {
     if ( k >= 'a' && k <= 'p') k -= 32;
     printf("\x1b[%d;1H\x1b[7m\x1b[5m%c>\x1b[m", *LINES-1, k); // CUP row 31 col 1;
     if ( wait_key_hw() == ':' ) {
-        App->active_panel->drive = k;
-        load_directory(App->active_panel);
+        App.active_panel->drive = k;
+        load_directory(App.active_panel);
     }
     refresh_ui( 0 );
 }
 
 
 void select_file() {
-    int idx = App->active_panel->current_idx;
-    int offset = (App->active_panel == &App->left) ? 1 : *COLUMNS/2+1;
+    int idx = App.active_panel->current_idx;
+    int offset = (App.active_panel == &App.left) ? 1 : *COLUMNS/2+1;
 
     // A. invert the selection state in memory
-    App->active_panel->files[idx].selected = !App->active_panel->files[idx].selected;
+    App.active_panel->files[idx].attrib ^= 0x80;
 
     // B. redraw current line to show '*'
     // IMPORTANT: current_idx was not changed, line is drawn with cursor.
-    draw_file_line(App->active_panel, offset, idx);
+    draw_file_line(App.active_panel, offset, idx);
 
     // C. move the cursor to the next line
-    if (App->active_panel->current_idx < App->active_panel->num_files - 1) {
-        int old_idx = App->active_panel->current_idx;
-        App->active_panel->current_idx++;
+    if (App.active_panel->current_idx < App.active_panel->num_files - 1) {
+        int old_idx = App.active_panel->current_idx;
+        App.active_panel->current_idx++;
 
         // D. redraw previous line (w/o cursor but with '*')
-        draw_file_line(App->active_panel, offset, old_idx);
+        draw_file_line(App.active_panel, offset, old_idx);
 
         // E. redraw new line (with cursor)
-        draw_file_line(App->active_panel, offset, App->active_panel->current_idx);
+        draw_file_line(App.active_panel, offset, App.active_panel->current_idx);
     }
 }
 
 
 void line_up() {
-    if (App->active_panel->current_idx > 0) {
-        int old_idx = App->active_panel->current_idx;
-        App->active_panel->current_idx--;
+    if (App.active_panel->current_idx > 0) {
+        int old_idx = App.active_panel->current_idx;
+        App.active_panel->current_idx--;
 
         // if scrolling, redraw everything; if not, only two lines
-        if (App->active_panel->current_idx < App->active_panel->scroll_offset) {
+        if (App.active_panel->current_idx < App.active_panel->scroll_offset) {
             refresh_ui(0);
         } else {
-            int offset = (App->active_panel == &App->left) ? 1 : *COLUMNS/2+1;
-            draw_file_line(App->active_panel, offset, old_idx);
-            draw_file_line(App->active_panel, offset, App->active_panel->current_idx);
+            int offset = (App.active_panel == &App.left) ? 1 : *COLUMNS/2+1;
+            draw_file_line(App.active_panel, offset, old_idx);
+            draw_file_line(App.active_panel, offset, App.active_panel->current_idx);
         }
     }
 }
 
 
 void line_down() {
-    if (App->active_panel->current_idx < App->active_panel->num_files - 1) {
-        int old_idx = App->active_panel->current_idx;
-        App->active_panel->current_idx++;
+    if (App.active_panel->current_idx < App.active_panel->num_files - 1) {
+        int old_idx = App.active_panel->current_idx;
+        App.active_panel->current_idx++;
 
         // if scrolling, redraw everything; if not, only two lines
-        if (App->active_panel->current_idx >= App->active_panel->scroll_offset + VISIBLE_ROWS) {
+        if (App.active_panel->current_idx >= App.active_panel->scroll_offset + VISIBLE_ROWS) {
             refresh_ui(0);
         } else {
-            int offset = (App->active_panel == &App->left) ? 1 : *COLUMNS/2+1;
-            draw_file_line(App->active_panel, offset, old_idx);
-            draw_file_line(App->active_panel, offset, App->active_panel->current_idx);
+            int offset = (App.active_panel == &App.left) ? 1 : *COLUMNS/2+1;
+            draw_file_line(App.active_panel, offset, old_idx);
+            draw_file_line(App.active_panel, offset, App.active_panel->current_idx);
         }
     }
 }
 
 
 void page_up() {
-    if (App->active_panel->current_idx >= VISIBLE_ROWS/2)
-        App->active_panel->current_idx -= VISIBLE_ROWS/2;
+    if (App.active_panel->current_idx >= VISIBLE_ROWS/2)
+        App.active_panel->current_idx -= VISIBLE_ROWS/2;
     else
-        App->active_panel->current_idx = 0;
+        App.active_panel->current_idx = 0;
     refresh_ui(0);
 }
 
 
 void page_down() {
-    App->active_panel->current_idx += VISIBLE_ROWS/2;
-    if (App->active_panel->current_idx >= App->active_panel->num_files)
-        App->active_panel->current_idx = App->active_panel->num_files - 1;
+    App.active_panel->current_idx += VISIBLE_ROWS/2;
+    if (App.active_panel->current_idx >= App.active_panel->num_files)
+        App.active_panel->current_idx = App.active_panel->num_files - 1;
     refresh_ui(0);
 }
 
 
 void first_file() {
-    App->active_panel->current_idx = 0;
+    App.active_panel->current_idx = 0;
     refresh_ui(0);
 }
 
 
 void last_file() {
-    App->active_panel->current_idx = App->active_panel->num_files - 1;
+    App.active_panel->current_idx = App.active_panel->num_files - 1;
     refresh_ui(0);
 }
 
@@ -173,12 +172,12 @@ uint8_t yes_no() {
 
 
 void copy() {
-    Panel *dest = (App->active_panel == &App->left) ? &App->right : &App->left;
+    Panel *dest = (App.active_panel == &App.left) ? &App.right : &App.left;
     // clear dialog box and ask
     printf("\x1b[%d;1H\x1b[K COPY SELECTED FILES TO %c:? (Y/N) ", *LINES-1, dest->drive); // pos, erase EOL
     if ( yes_no() )
         // Y: copy multiple files
-        exec_multi_copy(App->active_panel, dest);
+        exec_multi_copy(App.active_panel, dest);
     // clear status line
     printf("\x1b[%d;1H\x1b[K", *LINES-1); // pos, erase EOL
 }
@@ -189,8 +188,8 @@ void delete() {
     printf("\x1b[%d;1H\x1b[K DELETE SELECTED FILES? (Y/N) ", *LINES-1); // pos, erase EOL
     if ( yes_no() ) {
         // Y: call master function
-        exec_multi_delete(App->active_panel);
-        load_directory(App->active_panel);
+        exec_multi_delete(App.active_panel);
+        load_directory(App.active_panel);
     }
     // clear status line
     printf("\x1b[%d;1H\x1b[K", *LINES-1); // pos, erase EOL
@@ -200,22 +199,25 @@ void delete() {
 
 int main(int argc, char** argv) {
 
-    App = calloc( 1, sizeof( AppState ) ); // reserve and init heap space
-    if ( App == NULL ) {
-        fprintf( stderr, "Not enough memory!\n" );
-        return -1;
-    }
-
-    // handle BDOS errors internally, do not exit
-    bdos( 45, 0xFF ); // set BDOS return error mode 1
 
     // CP/M Plus has values for screen size in System Control Block
     if ( bdos( 12, NULL ) == 0x31 ) { // version == CP/M Plus
+        // handle BDOS errors internally, do not exit
+        bdos( 45, 0xFF ); // set BDOS return error mode 1
         uint8_t scbpb[4] = { 0x1A, 0, 0, 0 }; // SCB parameter block, get col - 1
         *COLUMNS = bdos( 49, scbpb ) + 1;
         scbpb[0] = 0x1C; // lines - 1
         *LINES = bdos( 49, scbpb ) + 1;
     }
+
+    uint16_t total;
+    uint16_t largest;
+    // total   = address where the total number of free bytes in the heap will be stored
+    // largest = address where the size of the largest available block in the heap will be stored
+    mallinfo( &total, &largest );
+
+    // calculate number of file entries
+    MAX_FILES = largest / sizeof( FileEntry ) / 2;
 
     // cmd line argument "--config" shows address of screen size constants
     // in zmc.com to help the user to patch with a HEX editor, e.g. BE.
@@ -225,7 +227,10 @@ int main(int argc, char** argv) {
             uint16_t value = bdos( 12, NULL );
             printf( "COLUMNS @ 0x%04X: %d\n", COLUMNS - 0x100, *COLUMNS );
             printf( "LINES @ 0x%04X: %d\n", LINES - 0x100, *LINES );
+            printf( "MAX_FILES: %u\n", MAX_FILES );
             return 0;
+        } else if ( !strcmp( *argv, "--DEVEL" ) ) {
+            ++DEVEL;
         } else if ( !strcmp( *argv, "--DEBUG" ) ) {
             ++DEBUG;
         } else if ( !strcmp( *argv, "--KEY" ) ) {
@@ -247,12 +252,30 @@ int main(int argc, char** argv) {
             }
         }
     }
-    App->left.drive = '@'; App->left.active = 1; // current drive
-    App->right.drive = '@'; App->right.active = 0; // current drive
-    App->active_panel = &App->left;
 
-    load_directory(&App->left);
-    load_directory(&App->right);
+    FileEntry *f_left;
+    FileEntry *f_right;
+
+    f_left = calloc( MAX_FILES, sizeof( FileEntry ) ); // reserve and init heap space
+    if ( f_left == NULL ) {
+        fprintf( stderr, "Not enough memory!\n" );
+        return -1;
+    }
+    f_right = calloc( MAX_FILES, sizeof( FileEntry ) ); // reserve and init heap space
+    if ( f_right == NULL ) {
+        fprintf( stderr, "Not enough memory!\n" );
+        return -1;
+    }
+
+    App.left.files = f_left;
+    App.right.files = f_right;
+
+    App.left.drive = '@'; App.left.active = 1; // current drive
+    App.right.drive = '@'; App.right.active = 0; // current drive
+    App.active_panel = &App.left;
+
+    load_directory(&App.left);
+    load_directory(&App.right);
     printf("\x1b[?25l\x1b[2J\x1b[H"); // hide cursor, clear, home
     refresh_ui( 1 ); // refresh/init both panels
 
@@ -264,11 +287,11 @@ int main(int argc, char** argv) {
         if (k == 0x09) { // TAB: OTHER_PANEL
             other_panel();
         } else if ( k == 'v' || k == 'V' ) { // View ASCII
-            view_file(App->active_panel);
+            view_file(App.active_panel);
             clrscr(); // clear screen, hide cursor
             refresh_ui(1);
         } else if ( k == 'x' || k == 'X' ) { // Dump HEX
-            dump_file(App->active_panel);
+            dump_file(App.active_panel);
             clrscr(); // clear screen, hide cursor
             refresh_ui(1);
         } else if (k == ' ' || k == 'V'-'@') { // ' ' or ^V -> SELECT
@@ -327,12 +350,12 @@ int main(int argc, char** argv) {
                     printf("\x1b[%d;1H\x1b[K", *LINES-1); // pos, erase EOL
 	        }
 	        else if (k == 'R') { // F3 = "<ESC>OR" VIEW
-	            view_file(App->active_panel);
+	            view_file(App.active_panel);
 		    clrscr(); // clear screen, hide cursor
                     refresh_ui(1);
 	        }
 		else if (k == 'S') { // F4 = "<ESC>OS" DUMP
-		    dump_file(App->active_panel);
+		    dump_file(App.active_panel);
 		    clrscr(); // clear screen, hide cursor
                     refresh_ui(1);
 		}
