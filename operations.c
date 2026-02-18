@@ -35,7 +35,7 @@ void prepare_fcb( char *name_ptr, Panel *src, Panel *dst ) {
     if ( src ) {
         memset(fcb_src, 0, sizeof(fcb_src));
         *fcb_src = (src->drive - 'A') + 1;
-        memset(&fcb_src+1, ' ', 11);
+        memset(fcb_src+1, ' ', 11);
         for( uint8_t j = 0; j < 8 && name_ptr[j] != '.' && name_ptr[j] != '\0'; j++)
             fcb_src[1+j] = name_ptr[j];
         while( *name_ptr && *name_ptr != '.')
@@ -48,8 +48,8 @@ void prepare_fcb( char *name_ptr, Panel *src, Panel *dst ) {
     }
     if ( dst ) {
         memset(fcb_dst, 0, sizeof(fcb_dst));
-        *fcb_dst = (src->drive - 'A') + 1;
-        memset(&fcb_dst+1, ' ', 11);
+        *fcb_dst = (dst->drive - 'A') + 1;
+        memset(fcb_dst+1, ' ', 11);
         for( uint8_t j = 0; j < 8 && name_ptr[j] != '.' && name_ptr[j] != '\0'; j++)
             fcb_dst[1+j] = name_ptr[j];
         while( *name_ptr && *name_ptr != '.')
