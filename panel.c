@@ -54,28 +54,30 @@ void draw_file_info( Panel *p, int f_idx ) {
     else if ( p->files[f_idx].extent < 7812) // file size < 1E6
         printf( "%6lu", (uint32_t)p->files[f_idx].extent << 7 );
     else
-        printf( "%4uK", (uint16_t)(p->files[f_idx].extent + 7) >> 3 );
+        printf( "%5uK", (uint16_t)(p->files[f_idx].extent + 7) >> 3 );
 
-    if ( p->show_date && p->files[f_idx].date) { // date and time defined
-        printf(" %04d%s%02d%s%02d %02X%s%02X",
-            p->files[f_idx].date,
-            PANEL_WIDTH < 42 ? "" : "-",
-            p->files[f_idx].month,
-            PANEL_WIDTH < 42 ? "" : "-",
-            p->files[f_idx].day,
-            p->files[f_idx].hour,
-            PANEL_WIDTH < 42 ? "" : ":",
-            p->files[f_idx].minute
-        );
-        if (p->active && f_idx == p->current_idx)
-            set_normal();
-    } else {
+    if ( p->show_date ) {
+        if ( p->files[f_idx].date) { // date and time defined
+            printf(" %04d%s%02d%s%02d %02X%s%02X",
+                p->files[f_idx].date,
+                PANEL_WIDTH < 42 ? "" : "-",
+                p->files[f_idx].month,
+                PANEL_WIDTH < 42 ? "" : "-",
+                p->files[f_idx].day,
+                p->files[f_idx].hour,
+                PANEL_WIDTH < 42 ? "" : ":",
+                p->files[f_idx].minute
+            );
+        } else {
         uint8_t w = PANEL_WIDTH < 42 ? 14 : 17;
         if (p->active && f_idx == p->current_idx)
             set_normal();
         while ( w-- )
             putchar( ' ' );
+        }
     }
+    if (p->active && f_idx == p->current_idx)
+        set_normal();
 }
 
 
