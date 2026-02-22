@@ -1,14 +1,16 @@
 #!/bin/bash
-# Compilador z88dk para Z80 / CP/M
-# -O3: Optimización máxima
-# -create-app: Genera el archivo .COM directamente
+# Compile z88dk for Z80 / CP/M
+# -O3: maximal optimisation
+# -vn: no verbosity
+# -create-app: Build a .COM file
 
-zcc +cpm -O3 -vn main.c panel.c operaciones.c -o ZMC.COM -create-app
+zcc +cpm -O3 -vn -DAMALLOC -pragma-define:CRT_STACK_SIZE=1024 -Wall \
+main.c panel.c operations.c globals.c -o zmc.com -create-app
 
 if [ $? -eq 0 ]; then
-    echo "✅ Compilación exitosa: ZMC.COM generado."
-    # Si usas emulador, aquí podrías añadir la inyección al .dsk
+    echo "✅ Build OK: ZMC.COM generated."
+    # If you use an emulator, you can transfer it to the *.dsk
     # cpmcp -f connor z80.dsk ZMC.COM 0:
 else
-    echo "❌ Error en la compilación."
+    echo "❌ Build error."
 fi
