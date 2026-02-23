@@ -56,6 +56,7 @@ void draw_file_info( Panel *p, int f_idx ) {
     else
         printf( "%5uK", (uint16_t)(p->files[f_idx].extent + 7) >> 3 );
 
+    uint8_t w;
     if ( p->show_date ) {
         if ( p->files[f_idx].date) { // date and time defined
             printf(" %04d%s%02d%s%02d %02X%s%02X",
@@ -68,16 +69,24 @@ void draw_file_info( Panel *p, int f_idx ) {
                 PANEL_WIDTH < 42 ? "" : ":",
                 p->files[f_idx].minute
             );
-        } else {
-        uint8_t w = PANEL_WIDTH < 42 ? 14 : 17;
+        } else { // spaces instead of date
+            w = PANEL_WIDTH < 42 ? 14 : 17;
+            while ( w-- )
+                putchar( ' ' );
+        }
         if (p->active && f_idx == p->current_idx)
             set_normal();
+        // fill to end of panel line
+        w = PANEL_WIDTH < 42 ? PANEL_WIDTH - 39 : PANEL_WIDTH - 42;
         while ( w-- )
             putchar( ' ' );
-        }
+    } else { // no date for complete drive or panel too narrow
+        if (p->active && f_idx == p->current_idx)
+            set_normal();
+        w = PANEL_WIDTH - 25;
+        while ( w-- )
+            putchar( ' ' );
     }
-    if (p->active && f_idx == p->current_idx)
-        set_normal();
 }
 
 
