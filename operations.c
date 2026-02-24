@@ -1,6 +1,6 @@
 /*
 Z80 Management Commander (ZMC)
-Copyright (C) 2026 Volney Torres
+Copyright (C) 2026 Volney Torres & Martin Homuth-Rosemann
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -158,7 +158,7 @@ void load_directory(Panel *p) {
     if (p->drive == '@') // '@' -> select current drive
         p->drive = bdos( 25, fcb_src ) + 'A';
     /* 1. change drive to fetch the complete directory */
-    bdos(14, p->drive - 'A'); 
+    bdos(14, p->drive - 'A');
 
     /* 2. Prepare FCB to match all files (*.*) and all extents */
     memset(fcb_src, 0, sizeof(fcb_src));
@@ -170,7 +170,7 @@ void load_directory(Panel *p) {
     while (result != 255 && count < MAX_FILES) { // OK: result = 0..3
         /* record is in default DMA (0x80) */
         /* 32 bytes dir entries according index (0-3) in 128 bytes record */
-        dir_entry = (cpm_dir *)(0x80 + (result * 32));
+        dir_entry = (cpm_dir *)(DEF_DMA + (result * 32));
 
         /* only if not erased (0xE5) */
         if (dir_entry->user != 0xE5) {
@@ -196,11 +196,11 @@ void load_directory(Panel *p) {
                 strcpy( p->files[count].cpmname, strtok(clean_name, " ") );
 
             // handle the CP/M3 date/time entry
-            // check if date time info exists in the 4th 32 byte directory entry
-            if ( result < 3 && *((uint8_t *)(0xE0)) == '!' ) { // yes
+            // check if date time info exists in the 4th 32 byte directory entry at default DMA
+            if ( result < 3 && *((uint8_t *)(DEF_DMA + 3 * 0x20)) == '!' ) { // yes
                 if ( PANEL_WIDTH >= 40 ) // no date/time display for narrow panels
                     p->show_date = 1;
-                date_time_dir *dtd = (date_time_dir *)(0xE0);
+                date_time_dir *dtd = (date_time_dir *)(DEF_DMA + 3 * 0x20);
                 p->files[count].date = dtd->dt[result].update.date;
                 p->files[count].hour = dtd->dt[result].update.hour;
                 p->files[count].minute = dtd->dt[result].update.minute;
@@ -281,12 +281,16 @@ int copy_file(Panel *src, Panel *dst) {
 
 
 void show_header() {
-    printf("\x1b[2J\x1b[H\x1b[?25l"); // erase, home, hide cursor
+    clr_scr();
+    goto_xy( 1, 1 ); // home
+    hide_cursor();
 }
 
 
 void show_footer( const char *action, const char *file_name ) {
-    printf("\x1b[7m %s: %s (<SPACE>: more | <ESC>: exit) \x1b[0m", action, file_name); // inv / normal
+    set_invers();
+    printf(" %s: %s (<SPACE>: more | <ESC>: exit) ", action, file_name);
+    set_normal();
 }
 
 
@@ -305,7 +309,7 @@ void view_file() {
     if (bdos(15, fcb_src) != 255) { // BDOS function 15 - Open directory
         while (bdos(20, fcb_src) == 0) { // BDOS function 20 (F_READ) - read next record
             for (i = 0; i < 128; i++) {
-                char c = *((char *)(0x80 + i));
+                char c = *((char *)(DEF_DMA + i));
                 if (c == 0x1A) goto end_of_file; // EOF (Ctrl+Z)
                 putchar(c);
                 if (c == '\n') {
@@ -314,8 +318,10 @@ void view_file() {
                     // Pausa cuando se llena la pantalla (aprox VISIBLE_ROWS líneas)
                     if (line_count >= PANEL_HEIGHT) {
                         show_footer( "VIEW", name_ptr );
-                        if (wait_key_hw() == 27) goto esc_file;
-                        printf("\r\x1b[K"); // CR, erase EOL
+                        if ( wait_key_hw() == ESC )
+                            goto esc_file;
+                        putchar( '\r' );
+                        clr_line_right();
                         line_count = 0;
                     }
                 }
@@ -325,10 +331,13 @@ void view_file() {
         printf("\r\nError opening file.");
     }
 end_of_file:
-    printf("\r\n\x1b[7m --- End Of File --- \x1b[0m"); // inv / normal
+    puts( "" ); // CRLF
+    set_invers();
+    printf(" --- End Of File --- "); // inv / normal
+    set_normal();
     wait_key_hw();
 esc_file:
-    clrscr(); // clear screen, hide cursor
+    clr_scr(); // clear screen, hide cursor
     refresh_ui( PAN_BOTH );
 }
 
@@ -350,11 +359,11 @@ void dump_file() {
             for (i = 0; i < 128; i += 16) {
                 printf("%04X  ", (unsigned int)address);
                 for (j = 0; j < 16; j++) {
-                    printf("%02X ", *((unsigned char *)(0x80 + i + j)));
+                    printf("%02X ", *((unsigned char *)(DEF_DMA + i + j)));
                 }
                 printf(" |");
                 for (j = 0; j < 16; j++) {
-                    unsigned char c = *((unsigned char *)(0x80 + i + j));
+                    unsigned char c = *((unsigned char *)(DEF_DMA + i + j));
                     if (c >= 32 && c <= 126) putchar(c);
                     else putchar('.');
                 }
@@ -366,7 +375,8 @@ void dump_file() {
                 if (line_count >= PANEL_HEIGHT) {
                     show_footer( "DUMP", name_ptr );
                     if (wait_key_hw() == 27) goto esc_file;
-                    printf("\r\x1b[K"); // CR, erase EOL
+                    putchar( '\r' );
+                    clr_line_right();
                     line_count = 0;
                 }
             }
@@ -374,10 +384,13 @@ void dump_file() {
     } else {
         printf("\r\nError opening file.");
     }
-    printf("\r\n\x1b[7m --- End Of File --- \x1b[0m"); // inv / normal
+    puts( "" );
+    set_invers();
+    printf(" --- End Of File --- ");
+    set_normal();
     wait_key_hw();
-    esc_file:
-    clrscr(); // clear screen, hide cursor
+esc_file:
+    clr_scr(); // clear screen, hide cursor
     refresh_ui( PAN_BOTH );
 }
 
@@ -397,22 +410,26 @@ int copy_file_by_index(Panel *src, Panel *dst, uint16_t f_idx) {
 
 /* 2. process multi selections */
 void exec_multi_copy(Panel *src, Panel *dst) {
-    int i, marcados = 0, procesados = 0;
+    int i, marked = 0, done = 0;
 
     for (i = 0; i < src->num_files; i++) {
-        if (src->files[i].attrib & B_SEL) marcados++;
+        if (src->files[i].attrib & B_SEL) ++marked;
     }
 
-    if (marcados == 0) {
-        printf("\x1b[%d;1H\x1b[7m Copying: %s... \x1b[0m",
-               SCREEN_HEIGHT-1, src->files[src->current_idx].cpmname);
+    if (marked == 0) {
+        goto_xy( 1, SCREEN_HEIGHT-1 );
+        set_invers();
+        printf(" Copying: %s... ", src->files[src->current_idx].cpmname);
+        set_normal();
         copy_file_by_index(src, dst, src->current_idx);
     } else {
         for (i = 0; i < src->num_files; i++) {
             if (src->files[i].attrib & B_SEL) {
-                procesados++;
-                printf("\x1b[%d;1H\x1b[7m [%d/%d] Copying: %s \x1b[0m",
-                       SCREEN_HEIGHT-1, procesados, marcados, src->files[i].cpmname);
+                done++;
+                goto_xy( 1, SCREEN_HEIGHT-1 );
+                set_invers();
+                printf(" [%d/%d] Copying: %s ", done, marked, src->files[i].cpmname);
+                set_normal();
 
                 // USAR EL NOMBRE CORRECTO AQUÍ:
                 copy_file_by_index(src, dst, i);
@@ -425,23 +442,25 @@ void exec_multi_copy(Panel *src, Panel *dst) {
 }
 
 void exec_multi_delete(Panel *p) {
-    int i, marcados = 0, procesados = 0;
+    int i, marked = 0, done = 0;
     // count number of selections
     for (i = 0; i < p->num_files; i++) {
-        if (p->files[i].attrib & B_SEL) marcados++;
+        if (p->files[i].attrib & B_SEL) marked++;
     }
-    if (marcados == 0) {
+    if (marked == 0) {
         // if none selected, delete  the current file (original functionality)
-        printf("\x1b[%d;1H\x1b[K Deleting: %s... ", SCREEN_HEIGHT-1, p->files[p->current_idx].cpmname);
-        delete_file(p);
+        goto_xy( 1, SCREEN_HEIGHT-1 );
+        clr_line_right();
+        printf( " Deleting: %s... ", p->files[p->current_idx].cpmname );
+        delete_file( p );
     } else {
         // batch deletion
         for (i = 0; i < p->num_files; i++) {
             if (p->files[i].attrib & B_SEL) {
-                procesados++;
-                printf("\x1b[%d;1H\x1b[K [%d/%d] Deleting: %s ", // pos, erase to EOL
-                       SCREEN_HEIGHT-1,  procesados, marcados, p->files[i].cpmname);
-
+                ++done;
+                goto_xy( 1, SCREEN_HEIGHT-1 );
+                clr_line_right();
+                printf(" [%d/%d] Deleting: %s ", done, marked, p->files[i].cpmname);
                 prepare_fcb(p->files[i].cpmname, p, NULL);
                 bdos(19, fcb_src); // BDOS function 19 (F_DELETE) - delete file
                 p->files[i].attrib &= ~B_SEL;
@@ -449,5 +468,6 @@ void exec_multi_delete(Panel *p) {
         }
     }
     // clear dialog part
-    printf("\x1b[%d;1H\x1b[K", SCREEN_HEIGHT-1 ); // pos, erase EOL
+    goto_xy( 1, SCREEN_HEIGHT-1 );
+    clr_line_right();
 }

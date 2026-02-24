@@ -1,51 +1,51 @@
+/*
+Z80 Management Commander (ZMC)
+Copyright (C) 2026 Volney Torres & Martin Homuth-Rosemann
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+*/
+
 #include <stdio.h>
 #include <stdint.h>
 #include "zmc.h"
 
+// GLOBAL VARIABLES
 
+// // the status of both panels
 AppState App;
 
-
-uint8_t CONFIG[] = { // 80x40
+// default configuration, can be patched for the target terminal
+// get the address of the config values with "zmc --config
+const uint8_t CONFIG[] = { // 80x40
     80,  // Columns
-    32   // Lines
+    24   // Lines
 };
-
-
-char cmdline[CMDLINELEN+1];
-
-uint8_t DEBUG = 0;
-uint8_t DEVEL = 0;
 
 const uint8_t *COLUMNS = CONFIG;
 const uint8_t *LINES = CONFIG+1;
 
+
+char cmdline[CMDLINELEN+1];
+
+uint8_t DEBUG = 0; // increase with "zmc --debug", can be used to enable messages etc.
+uint8_t DEVEL = 0; // increase with "zmc --devel", can be used to enable new features
+
+
 uint16_t MAX_FILES = 0;
 
 
-void show_cursor() {
-    printf("\x1b[?25h");
-}
-
-
-void hide_cursor() {
-    printf("\x1b[?25l");
-}
-
-
-void set_invers() {
-    printf("\x1b[7m");
-}
-
-
-void set_normal() {
-    printf("\x1b[0m");
-}
-
-
-void clrscr() {
-    printf("\x1b[2J\x1b[?25l");
-}
+// GLOBAL FUNCTIONS
 
 void print_cpm_attrib( uint8_t *ca) {
     // show file attributes
@@ -58,8 +58,11 @@ void print_cpm_attrib( uint8_t *ca) {
 
 
 void show_prompt() {
-    printf("\x1b[%d;1H\x1b[0m%c> %s\x1b[?25h\x1b[K",
-           PANEL_HEIGHT+1, App.active_panel->drive, cmdline );
+    goto_xy( 1, PANEL_HEIGHT+1 );
+    set_normal();
+    printf("%c> %s", App.active_panel->drive, cmdline );
+    show_cursor();
+    clr_line_right();
 }
 
 
@@ -76,12 +79,14 @@ void refresh_ui(uint8_t which_panel) {
         else if ( App.left.active )
             draw_panel(&App.right, *COLUMNS/2+1);
     }
-    if ( PANEL_WIDTH >= 40 )
-        printf("\x1b[%d;1H\x1b[7m| A: - P: | TAB:Sw | F1:Help | F3:View | F4:Dump | F5:Copy | F8:Del | F10:Exit |\x1b[0m", PANEL_HEIGHT+2);
-    else if ( PANEL_WIDTH >= 30 )
-        printf("\x1b[%d;1H\x1b[7mA:-P:|TAB:Sw|F1:Help|F3:View|F4:Dump|F5:Copy|F8:Del|F10:Exit\x1b[0m", PANEL_HEIGHT+2);
+    goto_xy( 1, PANEL_HEIGHT+2 );
+    set_invers();
+    if ( PANEL_WIDTH >= 40 ) {
+        printf("| A: - P: | TAB:Sw | F1:Help | F3:View | F4:Dump | F5:Copy | F8:Del | F10:Exit |");
+    } else if ( PANEL_WIDTH >= 30 ) {
+        printf("A:-P:|TAB:Sw|F1:Help|F3:View|F4:Dump|F5:Copy|F8:Del|F10:Exit");
+    }
+    set_normal();
     show_prompt();
 }
-
-
 

@@ -1,6 +1,6 @@
 /*
 Z80 Management Commander (ZMC)
-Copyright (C) 2026 Volney Torres
+Copyright (C) 2026 Volney Torres & Martin Homuth-Rosemann
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -16,38 +16,31 @@ You should have received a copy of the GNU General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/>.
 */
 
+// strip the MS-DOS protection header
+#pragma output noprotectmsdos
+
+// do not insert the file redirection option while parsing the command line arguments
+#pragma output noredir
+
 #include <ctype.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <malloc.h>
+#include <cpm.h>
 #include "zmc.h"
 
 
 extern AppState App;
 
 
-
-unsigned char wait_key_hw() {
-// use BIOS CONIO to ignore XON/XOFF (^Q is used as fkt key)
-// translate RUB to BS
-#asm
-bios_kbd:
-    ld      hl, conio_ret   ; conio shall return there
-    push    hl              ; ret addr on stack
-    ld      hl, (0001)      ; bios WBOOT addr
-    ld      de, 6           ; offset CONIO-WBOOT
-    add     hl,de           ; get addr of CONIO
-    jp      (hl)            ; execute BIOS,
-conio_ret:                  ; conio will ret here
-    cp      0x7F            ; RUB?
-    jr      nz, kbd_ret     ; no
-    ld      a, 0x08         ; yes, RUB -> BS
-kbd_ret:
-    ld      l, a            ; put returned key in HL
-    ld      h, 0
-#endasm
+uint8_t wait_key_hw() {
+    // use raw BIOS CONIO (fkt 3) to ignore XON/XOFF (^Q is used as fkt key)
+    uint8_t k = bios( BIOS_CONIN, 0, 0 ); // function, BC, DE, returns A
+    if ( k == RUB ) // translate RUB to BS
+        k = BS;
+    return k;
 }
 
 
@@ -79,7 +72,7 @@ void select_file() {
     int offset = (App.active_panel == &App.left) ? 1 : PANEL_WIDTH+1;
 
     // A. invert the selection state in memory
-    App.active_panel->files[idx].attrib ^= 0x80;
+    App.active_panel->files[idx].attrib ^= B_SEL;
 
     // B. redraw current line to show '*'
     // IMPORTANT: current_idx was not changed, line is drawn with cursor.
@@ -171,53 +164,83 @@ uint8_t yes_no() {
 void copy() {
     Panel *dest = (App.active_panel == &App.left) ? &App.right : &App.left;
     // clear dialog box and ask
-    printf("\x1b[%d;1H\x1b[K COPY SELECTED FILE(S) TO %c:? (Y/N) ", PANEL_HEIGHT+1, dest->drive); // pos, erase EOL
+    goto_xy( 1, PANEL_HEIGHT+1 );
+    clr_line_right();
+    printf(" COPY SELECTED FILE(S) TO %c:? (Y/N) ", dest->drive);
     if ( yes_no() )
         // Y: copy multiple files
         exec_multi_copy(App.active_panel, dest);
     // clear status line
-    printf("\x1b[%d;1H\x1b[K", PANEL_HEIGHT+1); // pos, erase EOL
+    goto_xy( 1, PANEL_HEIGHT+1 );
+    clr_line_right();
     refresh_ui( PAN_OTHER );
 }
 
 
 void delete() {
     // clear dialog box and ask
-    printf("\x1b[%d;1H\x1b[K DELETE SELECTED FILE(S)? (Y/N) ", PANEL_HEIGHT+1); // pos, erase EOL
+    goto_xy( 1, PANEL_HEIGHT+1 );
+    clr_line_right();
+    printf(" DELETE SELECTED FILE(S)? (Y/N) " );
     if ( yes_no() ) {
         // Y: call master function
         exec_multi_delete(App.active_panel);
         load_directory(App.active_panel);
     }
     // clear status line
-    printf("\x1b[%d;1H\x1b[K", PANEL_HEIGHT+1); // pos, erase EOL
+    goto_xy( 1, PANEL_HEIGHT+1 );
+    clr_line_right();
     refresh_ui( PAN_ACTIVE ); // file(s) deleted, refresh active panel
 }
 
 
 void help() {
+    uint8_t line = 1;
     hide_cursor();
-    printf( "\x1b[m\x1b[2J\x1b[H" ); // normal, cls, home
-    puts( "                           " );
-    puts( " #######  #     #   #####  " );
-    puts( "      #   ##   ##  #     # " );
-    puts( "     #    # # # #  #       " );
-    puts( "    #     #  #  #  #       " );
-    puts( "   #      #     #  #       " );
-    puts( "  #       #     #  #     # " );
-    puts( " #######  #     #   #####  " );
-    puts( "                           " );
-    puts( " ZMC v1.2 - Volney Torres " );
+    set_normal();
+    clr_scr();
+    goto_xy( 1, line++ );
+    if ( SCREEN_HEIGHT >= 20) {
+        puts( "                           " );
+        puts( " #######  #     #   #####  " );
+        puts( "      #   ##   ##  #     # " );
+        puts( "     #    # # # #  #       " );
+        puts( "    #     #  #  #  #       " );
+        puts( "   #      #     #  #       " );
+        puts( "  #       #     #  #     # " );
+        puts( " #######  #     #   #####  " );
+        puts( "                           " );
+        line = 12;
+    }
 
-    uint8_t line = 12;
-    printf( "\x1b[%dH", line );
-    printf( "A: ... P:\x1b[%d;32HSelect drive\n", line++ );
-    printf( "[TAB]\x1b[%d;32HChange panel\n", line++ );
-    printf( "[F3], TYPE, VIEW, CAT\x1b[%d;32HShow file\n", line++ );
-    printf( "[F4], DUMP, HEX\x1b[%d;32HHexdump file\n", line++ );
-    printf( "[F5], COPY, CP\x1b[%d;32HCopy file(s)\n", line++ );
-    printf( "[F8], DEL, ERA, RM\x1b[%d;32HDelete file(s)\n", line++ );
-    printf( "[F9], [ESC][ESC], QUIT, EXIT\x1b[%d;32HExit\n", line++ );
+#ifndef i8080
+    puts( "= ZMC 1.3 - Volney Torres =" );
+#else
+    puts( "= ZMC 1.3 (8080 version) - Volney Torres =" );
+#endif
+
+    goto_xy( 1, line );
+    printf( "A: ... P:" );
+    goto_xy( 32, line++ );
+    puts( "Select drive" );
+    printf( "[TAB]" );
+    goto_xy( 32, line++ );
+    puts( "Change panel" );
+    printf( "[F3], TYPE, VIEW, CAT");
+    goto_xy( 32, line++ );
+    puts( "Show file" );
+    printf( "[F4], DUMP, HEX" );
+    goto_xy( 32, line++ );
+    puts( "Hexdump file" );
+    printf( "[F5], COPY, CP" );
+    goto_xy( 32, line++ );
+    puts( "Copy file(s)");
+    printf( "[F8], DEL, ERA, RM" );
+    goto_xy( 32, line++ );
+    puts( "Delete file(s)" );
+    printf( "[F9], [ESC][ESC], QUIT, EXIT" );
+    goto_xy( 32, line++ );
+    puts( "Exit" );
     wait_key_hw();
     refresh_ui( PAN_BOTH );
 }
@@ -244,7 +267,7 @@ int main(int argc, char** argv) {
     if ( bdos( 12, NULL ) == 0x31 ) { // version == CP/M Plus
         // handle BDOS errors internally, do not exit
         bdos( 45, 0xFF ); // set BDOS return error mode 1
-        uint8_t scbpb[4] = { 0x1A, 0, 0, 0 }; // SCB parameter block, get col - 1
+        uint8_t scbpb[ 4 ] = { 0x1A, 0, 0, 0 }; // SCB parameter block, get col - 1
         *COLUMNS = bdos( 49, scbpb ) + 1;
         scbpb[0] = 0x1C; // lines - 1
         *LINES = bdos( 49, scbpb ) + 1;
@@ -277,6 +300,7 @@ int main(int argc, char** argv) {
             // test for terminal function keys, exit with <ESC><ESC>
             uint8_t k;
             for(;;) {
+                puts( "function key test - exit with <ESC><ESC>" );
                 static uint8_t esc = 0;
                 k = wait_key_hw();
                 printf( "0x%02X  ", k );
@@ -316,7 +340,9 @@ int main(int argc, char** argv) {
 
     load_directory(&App.left);
     load_directory(&App.right);
-    printf("\x1b[?25l\x1b[2J\x1b[H"); // hide cursor, clear, home
+    clr_scr();
+    goto_xy( 1, 1 );
+    hide_cursor();
     refresh_ui( PAN_BOTH ); // refresh/init both panels
 
     uint8_t loop = 1;
@@ -339,9 +365,9 @@ int main(int argc, char** argv) {
         { "COPY", copy },
         { "CP", copy },
 
-        {"DEL", delete },
-        {"ERA", delete },
-        {"RM", delete },
+        { "DEL", delete },
+        { "ERA", delete },
+        { "RM", delete },
 
         { "TOP", first_file },
         { "POS1", first_file },
@@ -371,7 +397,7 @@ int main(int argc, char** argv) {
             }
             else if ( !strncmp( cmdline, "EXIT", 4 )
                 || !strncmp( cmdline, "QUIT", 4 ) ) {
-                break;
+                loop = 0;
             }
             else if ( *cmdline ) { // scan cmd list and get function
                 command_func_t function = find_command( cmdline, commands, num_commands );
@@ -382,10 +408,11 @@ int main(int argc, char** argv) {
             cp = cmdline;
             *cp = '\0';
         }
-        // here come the function keys
         else if ( k == TAB ) { // TAB: OTHER_PANEL
             other_panel();
-        } else if (k == ' ' || k == 'V'-'@') { // ' ' or ^V -> SELECT
+        }
+        // here come the function keys, first the WS bindings
+        else if (k == ' ' || k == 'V'-'@') { // ' ' or ^V -> SELECT
             select_file();
         } else if ( k == 'E'-'@' ) { // ^E
             line_up();
@@ -395,57 +422,22 @@ int main(int argc, char** argv) {
             page_up();
         } else if ( k == 'C'-'@' ) { // ^C
             page_down();
-        } else if ( k == ESC ) { // ESC sequences
+        }
+        // now the multi character function keys starting with <ESC>
+        else if ( k == ESC ) { // ESC sequences
             k = wait_key_hw();
-            if ( k == ESC ) { // <ESC><ESC>
-                break;
-            } else if ( k == '[' ) { // "<ESC>["
-                k = wait_key_hw();
-                if ( k == 'A' ) { // "<ESC>[A" LINE_UP
-                    line_up();
-                } else if ( k == 'B' ) { // "<ESC>[B" LINE_DOWN
-                    line_down();
-                } else if ( k == '5' && wait_key_hw() == '~' ) { // "<ESC>[5~" PAGE_UP
-                    page_up();
-                } else if ( k == '6' && wait_key_hw() == '~' ) { // "<ESC>[6~" PAGE_DOWN
-                    page_down();
-                } else if ( k == 'H' ) { // <HOME> = "<ESC>[H"
-                    first_file();
-                } else if ( k == 'F' ) { // <END> = "<ESC>[F"
-                    last_file();
-                } else if ( k == '1' ) { // F5 = "<ESC>[15~" / F8 = "<ESC>[19~"
-                    k = wait_key_hw();
-                    if ( k == '5' && wait_key_hw() == '~' ) { // F5 = "<ESC>[15~" COPY
-                        copy();
-                    } else if ( k == '9' && wait_key_hw() == '~' ) { // F8 = "<ESC>[19~" DELETE
-                        delete();
-                    }
-                } else if ( k == '2' ) {
-                    k = wait_key_hw();
-                    if ( k == '~' ) { // <INSERT> = "<ESC>[2~"
-                        select_file();
-                    } else if ( k == 1 && wait_key_hw() == '~' ) { // F10 = "<ESC>[21~"
-                        loop = 0; // ready, leave loop
-                    }
-                }
-            } else if ( k == 'O' ) { // <ESC>O ...
-	        k = wait_key_hw();
-	        if ( k == 'P' ) { // F1 = "<ESC>OP" HELP
-                    help();
-	        }
-	        else if ( k == 'R' ) { // F3 = "<ESC>OR" VIEW
-	            view_file();
-	        }
-		else if ( k == 'S' ) { // F4 = "<ESC>OS" DUMP
-		    dump_file();
-		}
-            }
+            if ( k == ESC ) // <ESC><ESC>
+                loop = 0; // quit program
+            else
+                loop = esc_seq( k );
         }
         if ( loop )
             show_prompt();
-    }
-    printf( "\x1b[?25h" ); // show cursor
-    printf( "\x1b[0m\x1b[2J\x1b[H" ); // normal, cls, home
+    } // while ( loop )
+    clr_scr();
+    goto_xy( 1, 1 );
+    show_cursor();
+    set_normal();
     return 0;
 }
 

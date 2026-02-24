@@ -29,6 +29,7 @@ global compatibility [cite: 2026-02-15].
 - [F3 / F4]        : VIEW and DUMP modes with MORE/ESC support.
 - [F5 / F8]        : Batch COPY and DELETE operations.
 - [F10 / Ctrl+X]   : EXIT to system prompt.
+
 The key handling suports the standard VT100 cursor and function keys as well as
 the wordstar key bindings (^E = UP, ^X = DOWN, ^R = PAGEUP, ^C = PAGEDOWN).
 ZMC allows also to enter commands in the prompt line "A> " followed by [CR],

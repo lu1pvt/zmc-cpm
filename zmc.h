@@ -1,6 +1,6 @@
 /*
 Z80 Management Commander (ZMC)
-Copyright (C) 2026 Volney Torres
+Copyright (C) 2026 Volney Torres & Martin Homuth-Rosemann
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -246,6 +246,8 @@ typedef struct { // CP/M Plus directory info for 3 files
 #define B_SYS 0x02
 #define B_RO 0x01
 
+#define DEF_DMA 0x80
+
 typedef struct {
     char cpmname[FILENAME_LEN]; // "FILENAME.EXT\0"
     uint8_t attrib; // sel,0,0,0,0,A,S,R
@@ -275,7 +277,7 @@ typedef struct {
     Panel *active_panel;
 } AppState;
 
-#define CMDLINELEN 128
+#define CMDLINELEN 20
 extern char cmdline[];
 
 extern uint16_t MAX_FILES;
@@ -284,7 +286,25 @@ void set_invers( void );
 void set_normal( void );
 void show_cursor();
 void hide_cursor();
-void clrscr( void );
+void clr_scr( void );
+void goto_xy( uint8_t col, uint8_t row );
+void putchar_xy( uint8_t col, uint8_t row, char c );
+void clr_line_right( void );
+void clr_line_left( void );
+void clr_line( void );
+void line_up( void );
+void line_down( void );
+void page_up( void );
+void page_down( void );
+void first_file( void );
+void last_file( void );
+void copy( void );
+void delete( void );
+void select_file( void );
+void select( void );
+void help( void );
+uint8_t esc_seq( uint8_t key );
+
 void print_cpm_attrib( uint8_t *ca );
 void draw_panel(Panel *p, uint8_t x_offset);
 void load_directory(Panel *p);
