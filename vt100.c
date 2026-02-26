@@ -24,7 +24,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 
 // handle VT100 function keys starting with <ESC>
-uint8_t esc_seq( uint8_t k ) {
+uint8_t parse_function_keys( uint8_t k ) {
     uint8_t loop = 1;
     // the VT100 CSI commands starting with <ESC>[
     if ( k == '[' ) {
@@ -47,13 +47,17 @@ uint8_t esc_seq( uint8_t k ) {
                 copy();
             } else if ( k == '9' && wait_key_hw() == '~' ) { // F8 = "<ESC>[19~" DELETE
                 delete();
+            } else if ( k > '5' && k < '9' ) {
+                wait_key_hw(); // remove '~'
             }
         } else if ( k == '2' ) {
             k = wait_key_hw();
             if ( k == '~' ) { // <INSERT> = "<ESC>[2~"
                 select_file();
-            } else if ( k == 1 && wait_key_hw() == '~' ) { // F10 = "<ESC>[21~"
+            } else if ( k == '1' && wait_key_hw() == '~' ) { // F10 = "<ESC>[21~"
                 loop = 0; // ready, leave loop
+            } else if ( k >= '0' && k <= '9') {
+                wait_key_hw(); // remove '~'
             }
         }
     }

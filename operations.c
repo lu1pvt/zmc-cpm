@@ -250,6 +250,17 @@ void load_directory(Panel *p) {
     p->num_files = count;
 }
 
+// copy panel content when both panels show the same drive
+void copy_panel( Panel *src, Panel *dst ) {
+    if ( src == dst )
+        return;
+    memcpy( dst->files, src->files, MAX_FILES *sizeof( FileEntry ) );
+    dst->num_files = src->num_files;
+    dst->current_idx = src->current_idx;
+    dst->scroll_offset = src->scroll_offset;
+    dst->show_date = src->show_date;
+}
+
 
 // Delete the selected file(s) on active panel
 int delete_file() {

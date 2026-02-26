@@ -35,13 +35,26 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 extern AppState App;
 
 
-uint8_t wait_key_hw() {
-    // use raw BIOS CONIO (fkt 3) to ignore XON/XOFF (^Q is used as fkt key)
+uint8_t wait_key_bios( void ) {
+    // use raw BIOS CONIO (fkt 3) to ignore XON/XOFF (^Q and ^S are used as fkt keys)
     uint8_t k = bios( BIOS_CONIN, 0, 0 ); // function, BC, DE, returns A
     if ( k == RUB ) // translate RUB to BS
         k = BS;
     return k;
 }
+
+
+uint8_t wait_key_bdos( void ) {
+    // use BDOS RAWIO to ignore XON/XOFF (^Q and ^S are used as fkt keys)
+    uint8_t k = bdos( 6, 0xFD ); // C_RAWIO, wait for char, returns A
+    if ( k == RUB ) // translate RUB to BS
+        k = BS;
+    return k;
+}
+
+
+// function pointer, default is BIOS, can be switched to BDOS for CP/M3
+uint8_t (*wait_key_hw)(void) = &wait_key_bios;
 
 
 void other_panel() {
@@ -162,6 +175,8 @@ uint8_t yes_no() {
 
 
 void copy() {
+    if ( App.left.drive == App.right.drive ) // cannot copy to same drive
+        return;
     Panel *dest = (App.active_panel == &App.left) ? &App.right : &App.left;
     // clear dialog box and ask
     goto_xy( 1, PANEL_HEIGHT+1 );
@@ -186,11 +201,17 @@ void delete() {
         // Y: call master function
         exec_multi_delete(App.active_panel);
         load_directory(App.active_panel);
+        // if left == right update both panels
+        if ( App.left.drive == App.right.drive )
+            if ( App.left.active )
+                copy_panel( &App.left, &App.right );
+            else
+                copy_panel( &App.right, &App.left );
     }
     // clear status line
     goto_xy( 1, PANEL_HEIGHT+1 );
     clr_line_right();
-    refresh_ui( PAN_ACTIVE ); // file(s) deleted, refresh active panel
+    refresh_ui( App.left.drive == App.right.drive ? PAN_BOTH : PAN_ACTIVE ); // file(s) deleted, refresh active panel
 }
 
 
@@ -262,11 +283,15 @@ command_func_t find_command(const char *input, command_t commands[], int num_com
     return NULL;
 }
 
+
 int main(int argc, char** argv) {
+    uint8_t cpmversion = bdos( 12, NULL );
     // CP/M Plus has values for screen size in System Control Block
-    if ( bdos( 12, NULL ) == 0x31 ) { // version == CP/M Plus
+    if ( cpmversion == 0x31 ) { // version == CP/M Plus
         // handle BDOS errors internally, do not exit
         bdos( 45, 0xFF ); // set BDOS return error mode 1
+        bdos( 109, 0x0A ); // C_MODE, ignore ^C and ^S
+        wait_key_hw = &wait_key_bdos; // use BDOS RAWIO instead of BIOS CONIO
         uint8_t scbpb[ 4 ] = { 0x1A, 0, 0, 0 }; // SCB parameter block, get col - 1
         *COLUMNS = bdos( 49, scbpb ) + 1;
         scbpb[0] = 0x1C; // lines - 1
@@ -287,7 +312,10 @@ int main(int argc, char** argv) {
     while ( --argc ) {
         ++argv;
         if ( !strcmp( *argv, "--CONFIG" ) ) {
-            uint16_t value = bdos( 12, NULL );
+            printf( "CP/M version: %02X\n", cpmversion );
+#ifdef i8080
+            printf( "8080 code\n" );
+#endif
             printf( "COLUMNS @ 0x%04X: %d\n", COLUMNS - 0x100, *COLUMNS );
             printf( "LINES @ 0x%04X: %d\n", LINES - 0x100, *LINES );
             printf( "MAX_FILES: %u\n", MAX_FILES );
@@ -299,8 +327,8 @@ int main(int argc, char** argv) {
         } else if ( !strcmp( *argv, "--KEY" ) ) {
             // test for terminal function keys, exit with <ESC><ESC>
             uint8_t k;
+            printf( "CP/M version %02X: function key test - exit with <ESC><ESC>\n", cpmversion );
             for(;;) {
-                puts( "function key test - exit with <ESC><ESC>" );
                 static uint8_t esc = 0;
                 k = wait_key_hw();
                 printf( "0x%02X  ", k );
@@ -422,6 +450,12 @@ int main(int argc, char** argv) {
             page_up();
         } else if ( k == 'C'-'@' ) { // ^C
             page_down();
+        } else if ( k == 'Q'-'@' ) { // ^Q
+            k = wait_key_hw();
+            if ( k == 'S'-'@' ) // ^Q^S
+                first_file();
+            else if ( k == 'D'-'@' ) // ^Q^D
+                last_file();
         }
         // now the multi character function keys starting with <ESC>
         else if ( k == ESC ) { // ESC sequences
@@ -429,7 +463,7 @@ int main(int argc, char** argv) {
             if ( k == ESC ) // <ESC><ESC>
                 loop = 0; // quit program
             else
-                loop = esc_seq( k );
+                loop = parse_function_keys( k ); // VT100 function keys
         }
         if ( loop )
             show_prompt();

@@ -303,12 +303,13 @@ void delete( void );
 void select_file( void );
 void select( void );
 void help( void );
-uint8_t esc_seq( uint8_t key );
+uint8_t parse_function_keys( uint8_t key );
 
 void print_cpm_attrib( uint8_t *ca );
 void draw_panel(Panel *p, uint8_t x_offset);
 void load_directory(Panel *p);
-uint8_t wait_key_hw(void);
+void copy_panel( Panel *src, Panel *dst );
+extern uint8_t (*wait_key_hw)(void);
 int delete_file();
 int copy_file(Panel *src, Panel *dst);
 void draw_file_line(Panel *p, uint8_t x_offset, uint16_t file_idx);

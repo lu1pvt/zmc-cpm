@@ -5,6 +5,7 @@
 *.map
 *.sym
 *.lis
+*.lst
 *.bin
 *.COM
 .DS_Store
