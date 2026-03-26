@@ -1,0 +1,22 @@
+name: Build ZMC
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: z88dk/z88dk
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build zmc.com
+        run: make
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: zmc.com
+          path: zmc.com

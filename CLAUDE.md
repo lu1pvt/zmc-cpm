@@ -11,11 +11,17 @@ ZMC (Z80 Management Commander) — a dual-panel Norton Commander-style file mana
 Requires **z88dk** (ZCC compiler) installed and on PATH.
 
 ```sh
-make            # builds zmc.com
+make            # builds zmc.com (requires z88dk on PATH)
 ./make.sh       # alternative build script with status feedback
+
+# Docker build (no local z88dk needed):
+docker run --rm -v $(pwd):/src -w /src z88dk/z88dk make
+# On Apple Silicon, add: --platform linux/amd64
 ```
 
 Output: `zmc.com` (CP/M executable). No test suite or linter exists.
+
+CI: GitHub Actions workflow (`.github/workflows/build.yml`) builds on push/PR to main using the z88dk Docker image and uploads `zmc.com` as an artifact.
 
 Compiler flags: `+cpm -O3 -vn -DAMALLOC -pragma-define:CRT_STACK_SIZE=1024 -Wall -create-app`
 

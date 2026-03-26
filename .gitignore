@@ -7,6 +7,7 @@
 *.lis
 *.bin
 *.COM
+*.com
 .DS_Store
 ps_kill
 sniffer.c
@@ -16,3 +17,4 @@ sniffer.c
 *.old
 *.orig
 *.work
+/.claude/
