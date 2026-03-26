@@ -7,6 +7,7 @@
 *.lis
 *.bin
 *.COM
+*.com
 .DS_Store
 ps_kill
 sniffer.c

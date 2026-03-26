@@ -32,7 +32,7 @@ global compatibility [cite: 2026-02-15].
 
 4. TECHNICAL SPECIFICATIONS
 ---------------------------
-- Compiler: z88dk (ZCC) with -O3 optimization [cite: 2026-02-10].
+- Compiler: z88dk (ZCC) with -O3 optimization native/in Docker. [cite: 2026-02-10].
 - Terminal: ANSI/VT100 (Full support for real hardware and emulators).
 - Memory: Dynamic Heap management to support large directories.
 
