@@ -1,10 +1,11 @@
 name: Build ZMC
 
-on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+# -- Until merged back to main, do on all branches.
+#on:
+#  push:
+#    branches: [main]
+#  pull_request:
+#    branches: [main]
 
 jobs:
   build:
