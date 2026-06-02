@@ -35,7 +35,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 #include "internal_env.h"
 #include "zmc.h"
 
-// // the status of both panels
+// the status of both panels
 AppState App;
 
 char cmdline[ CMDLINELEN + 1 ];
@@ -47,6 +47,12 @@ uint8_t DEVEL = 0; // increase with "zmc --devel", can be used to enable new fea
 uint8_t CONFIG = 0;
 uint8_t BUFFER = 0;
 uint16_t MAX_FILES = 0;
+
+uint8_t COLUMNS = 0;
+uint8_t LINES = 0;
+uint8_t LINES2 = 0;
+
+uint8_t VLIB_STATUS = 0;
 
 uint8_t *cpbufpt = NULL;
 uint8_t cpbufsz = NUMBUF;
@@ -121,7 +127,7 @@ typedef void ( *command_func_t )( void );
 
 typedef struct {
     const char *keyword;
-    command_func_t func;
+    const command_func_t func;
 } command_t;
 
 // parse zmc cmd line and get a fkt pointer
@@ -133,6 +139,18 @@ command_func_t find_command( const char *input, command_t commands[], int num_co
     }
     return NULL;
 }
+
+
+// list of text commands from prompt line and called function
+const command_t commands[] = {
+    { "HELP", help },
+    { "VIEW", view_file }, { "TYPE", view_file },  { "CAT", view_file },
+    { "DUMP", dump_file }, { "HEX", dump_file },
+    { "COPY", copy_cmd },  { "CP", copy_cmd },
+    { "DEL", delete_cmd }, { "ERA", delete_cmd },  { "RM", delete_cmd },
+    { "TOP", first_file }, { "POS1", first_file },
+    { "BOT", last_file },  { "END", last_file },
+};
 
 
 int main( int argc, char **argv ) {
@@ -150,7 +168,7 @@ int main( int argc, char **argv ) {
         LINES2 = LINES - 2;
     }
 
-    uint16_t *envptr = (uint16_t *)0x109;
+    uint8_t **envptr = (void *)0x109;
 
     uint16_t total;
     uint16_t largest;
@@ -200,11 +218,12 @@ int main( int argc, char **argv ) {
                 }
                 close( fd );
                 // Reset DMA to default!
-                bdos( 26, DEF_DMA );
-                z3vinit( &env ); // init local
+                bdos( CPM_SDMA, DEF_DMA );
+                VLIB_STATUS = gz3init( &env ); // init local
             } else {
                 printf( "Cannot open TCAP or environment file: %s\n", *argv );
-                if ( ESC == wait_key_hw() )
+                uint8_t k = wait_key_hw();
+                if ( ESC == k || CTRL_C == k )
                     return -1;
             }
         } else if ( !strcmp( *argv, "--BUFFER" ) ) {
@@ -275,14 +294,43 @@ int main( int argc, char **argv ) {
     }
 
 
-    if ( CONFIG ) {
-        printf( "CP/M version: %02X\n", cpmversion );
-        if ( *envptr )
-            printf( "Z3 environment at: 0x%04X\n", *envptr );
+    if ( COLUMNS ) { // got value from CP/M3 SCB
+        if ( *envptr ) // update global ENV
+            *((uint8_t*)( *envptr + ( &INTCOLUMNS - &INTENV ) ) ) = COLUMNS;
+    } else {
+        if ( *envptr ) // use global value
+            COLUMNS = *((uint8_t*)( *envptr + ( &INTCOLUMNS - &INTENV ) ) );
         else
-            printf( "Using internal environment\n" );
-        printf( "COLUMNS @ 0x%04X: %d\n", &COLUMNS - 0x100, COLUMNS );
-        printf( "LINES @ 0x%04X: %d\n", &LINES - 0x100, LINES );
+            COLUMNS = INTCOLUMNS; // fallback to internal value
+    }
+    if ( LINES ) {
+        if ( *envptr )
+            *((uint8_t*)( *envptr + ( &INTLINES - &INTENV ) ) ) = LINES;
+    } else {
+        if ( *envptr )
+            LINES = *((uint8_t*)( *envptr + ( &INTLINES - &INTENV ) ) );
+        else
+            LINES = INTLINES;
+    }
+
+    if ( CONFIG ) {
+        uint8_t *pcol;
+        uint8_t *plin;
+        printf( "CP/M version: %02X\n", cpmversion );
+        if ( *envptr ) {
+            printf( "Z3 environment @ 0x%04X\n", *envptr );
+            pcol = (uint8_t*)( *envptr + ( &INTCOLUMNS - &INTENV ) );
+            plin = (uint8_t*)( *envptr + ( &INTLINES - &INTENV ) );
+            printf( "COLUMNS @ 0x%04X: %d\n", pcol, *pcol );
+            printf( "LINES @ 0x%04X: %d\n", plin, *plin );
+        } else {
+            uint8_t *pintenv = &INTENV;
+            pcol = &INTCOLUMNS;
+            plin = &INTLINES;
+            printf( "Using internal environment at file offset %04X\n", pintenv - 0x100 );
+            printf( "COLUMNS @ 0x%04X: %d\n", pcol - 0x100, *pcol );
+            printf( "LINES @ 0x%04X: %d\n", plin - 0x100, *plin );
+        }
         printf( "COPY BUFFER: %u\n", cpbufsz );
         printf( "MAX_FILES: %u\n", MAX_FILES );
         return 0;
@@ -296,10 +344,13 @@ int main( int argc, char **argv ) {
     App.active_panel = &App.left;
     App.inactive_panel = &App.right;
 
-    bdos( 26, DEF_DMA );
+    bdos( CPM_SDMA, DEF_DMA ); // set default DMA
 
-    if ( !*envptr )      // no global env
-        z3vinit( &env ); // init local
+    if ( !*envptr ) {      // no global env
+        VLIB_STATUS = gz3init( &env ); // init local
+    } else {
+        VLIB_STATUS = gz3init( *envptr );
+    }
 
     cls();
     curoff();
@@ -322,23 +373,6 @@ int main( int argc, char **argv ) {
 
     char *cp = cmdline;
     *cp = '\0';
-
-    // list of text commands from prompt line and called function
-    command_t commands[] = {
-        { "HELP", help },
-
-        { "VIEW", view_file }, { "TYPE", view_file },  { "CAT", view_file },
-
-        { "DUMP", dump_file }, { "HEX", dump_file },
-
-        { "COPY", copy_cmd },  { "CP", copy_cmd },
-
-        { "DEL", delete_cmd }, { "ERA", delete_cmd },  { "RM", delete_cmd },
-
-        { "TOP", first_file }, { "POS1", first_file },
-
-        { "BOT", last_file },  { "END", last_file },
-    };
 
     int num_commands = sizeof( commands ) / sizeof( commands[ 0 ] );
 
