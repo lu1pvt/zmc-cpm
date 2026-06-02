@@ -42,12 +42,6 @@ DEFC    CPM_MULT = 44
 
 SECTION     data_user
 
-;nofile: DEFM    "no source files$"
-;nodir:  DEFM    "no directory space$"
-;fspace: DEFM    "out of data space$"
-;wrprot: DEFM    "write protected?$"
-;normal: DEFM    "copy complete$"
-
 rdsek: DEFB     0           ;read sector index
 wrsek: DEFB     0           ;write sector index
 endof: DEFB     0           ;end of file flag
@@ -74,9 +68,8 @@ _cpsrcdst:
     ld      c,CPM_OPN
     call    BDOS            ;A=0xFF: error
     ld      (_status),a
-    ;ld      de,nofile       ;no file message
     inc     a
-    jp      z,errexit
+    jp      z,exit
 
 ;   source file open, prepare destination
     ld      de,_fcb_dst
@@ -86,9 +79,8 @@ _cpsrcdst:
     ld      c,CPM_MAKE
     call    BDOS            ;A=0xFF: error
     ld      (_status),a
-    ;ld      de,nodir        ;no directory message
     inc     a
-    jp      z,errexit
+    jp      z,exit
 
 ;   zero the current records
     xor     a
@@ -96,102 +88,18 @@ _cpsrcdst:
     ld      (dfcbcr),a
     ld      (endof),a       ;we're not at the end of file
 
+ifdef  USE_CPM3_MULTI_SECTOR
+
 ;   check the CP/M version
-;   use multi sector rd/wr for CP/M 3
+;   use multi sector rd/wr for CP/M 3 (currently buggy!)
 ;   use single sector rd/wr otherwise
 ;
     ld      c,CPM_VERS
     call    BDOS
     cp      31h             ; CP/M3?
-    jp      nz,copy_loop_2  ; no
+    jp      z,copy_loop_3   ; yes
 
-;   COPY LOOP for CP/M 3 (MULTI SECTOR)
-;   source file open, dest file open
-;   copy until end of file from source
-copy_loop_3:
-;   check we're not eof
-    xor     a
-    ld      hl,endof
-    or      (hl)
-    jr      nz,copy_done    ;jump to end of file
-
-;   prepare the sector indexes
-    ld      (rdsek),a
-    ld      a,(_cpbufsz)
-    ld      (wrsek),a
-
-;   set dma address
-    ld      de,(_cpbufpt)
-    call    setdma
-
-    ld      c,CPM_MULT
-    ld      de,(_cpbufsz)
-    ld      e,(de)
-    call    BDOS
-
-    ld      de,_fcb_src     ;source
-    ld      c,CPM_READ
-    call    BDOS            ;read next records
-    ld      (_status),a
-    cp      1               ;end of file?
-    jr      z,endoffile_3   ;skip to fileend if so
-    or      a
-    jr      nz,errexit      ;error
-
-    ld      de,(_cpbufsz)
-    ld      e,(de)
-    jr      write_start_3
-
-endoffile_3:
-    ld      (endof),a       ;set end of file flag
-    ld      e,h
-
-write_start_3:
-    ld      c,CPM_MULT
-    call    BDOS
-
-;   set dma address
-    ld      de,(_cpbufpt)
-    call    setdma
-
-    ld      de,_fcb_dst     ;destination
-    ld      c,CPM_WRIT
-    call    BDOS            ;write records
-    ld      (_status),a
-    ;ld      de,fspace       ;no free space message
-    or      a               ;0 if write OK
-    jr      nz,errexit      ;end if so
-
-    jr      copy_loop_3
-
-
-; common exit routines for CP/M 2.2 and CP/M 3
-copy_done:
-    ld      de,_fcb_dst     ;destination close
-    ld      c,CPM_CLS
-    call    BDOS            ;255 if error
-    ld      (_status),a
-    ;ld      de,wrprot       ;write protected message
-    inc     a
-    jr      z,errexit
-
-    ld      de,_fcb_src     ;source close
-    ld      c,CPM_CLS
-    call    BDOS
-
-normexit:
-    ;ld      de,normal       ;normal finish message
-
-errexit:
-    ;ld      c,CPM_PRST
-    ;call    BDOS
-    ld      de,TBUFF
-    call    setdma
-    ld      h,0
-    ld      a,(_status)
-    ld      l,a
-    ret
-
+endif
 
 ;   COPY LOOP for CP/M 2.2 (SINGLE SECTOR)
 ;   source file open, dest file open
@@ -202,7 +110,7 @@ copy_loop_2:
     xor     a
     ld      hl,endof
     or      (hl)
-    jr      nz,copy_done     ;jump to end of file
+    jr      nz,copy_done    ;jump to end of file
 
 ;   zero the sector indexes
     ld      (rdsek),a
@@ -220,7 +128,7 @@ read_loop_2:
     cp      1               ;end of file?
     jr      z,endoffile_2   ;skip to fileend if so
     or      a
-    jr      nz,errexit      ;error
+    jr      nz,exit         ;error
 
     ld      a,(rdsek)
     inc     a
@@ -264,9 +172,8 @@ write_loop_2:
     ld      c,CPM_WRIT
     call    BDOS            ;write record
     ld      (_status),a
-    ;ld      de,fspace       ;no free space message
     or      a               ;0 if write OK
-    jr      nz,errexit      ;end if so
+    jr      nz,exit         ;end if so
 
     ld      a,(wrsek)
     inc     a
@@ -289,7 +196,87 @@ write_loop_2:
     jr      write_loop_2      ;loop until buffer
 
 
+; common exit routines for CP/M 2.2 and CP/M 3
+copy_done:
+    ld      de,_fcb_dst     ;destination close
+    ld      c,CPM_CLS
+    call    BDOS            ;255 if error
+    ld      (_status),a
+    inc     a
+    jr      z,exit
+
+    ld      de,_fcb_src     ;source close
+    ld      c,CPM_CLS
+    call    BDOS
+
+exit:
+    ld      de,TBUFF
+    call    setdma
+    ld      h,0
+    ld      a,(_status)
+    ld      l,a
+    ret
+
+
 setdma:
     ld      c,CPM_SDMA
     jp      BDOS
 
+
+ifdef USE_CPM3_MULTI_SECTOR
+
+;   DO NOT USE, CAN CRASH THE SYSTEM!
+;   COPY LOOP for CP/M 3 (MULTI SECTOR)
+;   source file open, dest file open
+;   copy until end of file from source
+copy_loop_3:
+;   check we're not eof
+    xor     a
+    ld      hl,endof
+    or      (hl)
+    jr      nz,copy_done    ;jump to end of file
+
+;   set dma address
+    ld      de,(_cpbufpt)
+    call    setdma
+
+    ld      c,CPM_MULT
+    ld      de,_cpbufsz
+    ld      e,(de)
+    call    BDOS
+
+    ld      de,_fcb_src     ;source
+    ld      c,CPM_READ
+    call    BDOS            ;read next records
+    ld      (_status),a
+    cp      1               ;end of file?
+    jr      z,endoffile_3   ;skip to fileend if so
+    or      a
+    jr      nz,exit      ;error
+
+    ld      de,_cpbufsz
+    ld      e,(de)
+    jr      write_start_3
+
+endoffile_3:
+    ld      (endof),a       ;set end of file flag
+    ld      e,h             ;number of sectors read
+
+write_start_3:
+    ld      c,CPM_MULT
+    call    BDOS
+
+;   set dma address
+    ld      de,(_cpbufpt)
+    call    setdma
+
+    ld      de,_fcb_dst     ;destination
+    ld      c,CPM_WRIT
+    call    BDOS            ;write records
+    ld      (_status),a
+    or      a               ;0 if write OK
+    jr      nz,exit      ;end if so
+
+    jr      copy_loop_3
+
+endif

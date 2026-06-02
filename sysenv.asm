@@ -16,10 +16,12 @@
 
 ALIGN 128
 
+	PUBLIC	_INTENV, _INTCOLUMNS, _INTLINES, _INTLINES2
+
 ;  ENVIRONMENT DESCRIPTOR
 ;	IF INLINE, THERE IS A LEADING JMP JUST BEFORE THIS
 ;
-ENVORG1:
+_INTENV:
         JP      0000            ; jp BIOS_WBOOT
 	DB	"Z3ENV"		; Environment id
 	DB	80H             ; Class 4 environment (internal)
@@ -34,10 +36,10 @@ IOP:    DW	0000		; Iop address
 IOPS:   DB	0		; Number of 128-byte blocks in iop
 
 FCP:    DW	0000		; Fcp address
-FCPS:   DW	0000		; Number of 128-byte blocks in fcp
+FCPS:   DB	0000		; Number of 128-byte blocks in fcp
 
 Z3NDIR: DW	0000		; Ndr address
-Z3NDIRS: DW	0000		; Number of 18-byte entries in ndr
+Z3NDIRS: DB	0000		; Number of 18-byte entries in ndr
 
 Z3CL:   DW	0000		; Zcpr3 command line
 Z3CLS:  DB	0		; Number of bytes in command line
@@ -63,17 +65,16 @@ MHZ:    DB	0 		; Processor speed in Mhz
 
 MAXDSK: DB	'P'-'@'		; Maximum disk
 MAXUSR: DB	31		; Maximum user
-DUOK:   DB	0		; 1=ok to accept du, 0=not ok
+DUOK:   DB	1		; 1=ok to accept du, 0=not ok
 
 	DB	0		; Crt selection (0=crt 0, 1=crt 1)
 	DB	0		; Printer selection (n=printer n)
 
-	PUBLIC	_COLUMNS, _LINES, _LINES2
-_COLUMNS:
+_INTCOLUMNS:
 	DB	80		; Width of crt 0
-_LINES:
+_INTLINES:
 	DB	24		; Number of lines on crt 0
-_LINES2:
+_INTLINES2:
 	DB	22		; Number of lines of text on crt 0
 
 DRVEC:  DW	0000		; Drive Vector *sg*

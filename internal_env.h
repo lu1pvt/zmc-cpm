@@ -1,6 +1,7 @@
 #ifndef __INTENV_H
 #define __INTENV_H
 
-extern char env;
+#include <stdint.h>
+extern uint8_t env;
 
 #endif

@@ -6,5 +6,5 @@ PUBLIC _env
 INCLUDE "sysenv.asm"
 INCLUDE "vt100.asm"
 
-_env: equ ENVORG1
+_env: equ _INTENV
 

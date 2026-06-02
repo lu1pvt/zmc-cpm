@@ -45,7 +45,7 @@ ESC	EQU	27		; Escape character
 ; Z3TCAP.TCP library purposes only, the name terminates with a space
 ; and must be unique in the first eight characters.
 ;
-TNAME:	DB	"VT-100D      "	; Name of terminal (13 chars)
+TNAME:	DB	"VT-100R      "	; Name of terminal (13 chars)
 ;
 GOFF:	DB	GOELD-TNAME	; Graphics offset from Z3TCAP start
 ;
@@ -65,7 +65,7 @@ B14:	DB	10000000B	; Configuration byte B14
 ;	B15 b4: ANSI........... 0 = ASCII          1 = ANSI
 ;
 ;	bit:	76543210
-B15:	DB	00010101B	; Configuration byte B15
+B15:	DB	00010001B	; Configuration byte B15
 ;
 ; Single character arrow keys or WordStar diamond
 ;
@@ -85,11 +85,9 @@ B15:	DB	00010101B	; Configuration byte B15
 CL:	DB	ESC,"[;H",ESC,"[J",0 ; Home cursor and clear screen
 CM:	DB	ESC,"[%i%d;%dH",0 ; Cursor motion macro
 CE:	DB	ESC,"[K",0      ; Erase from cursor to end-of-line
-;SO:	DB	ESC,'[1m',0     ; Start standout mode - bright
-SO:	DB	ESC,"[7m",0      ; Start standout mode - reverse
-;SE:	DB	ESC,'[m',0      ; End standout mode - bright
-SE:	DB	ESC,"[27m",0	 ; End standout mode - reverse
-TI:	DB	ESC,"[1m",0     ; Terminal initialization (using SO:)
+SO:	DB	ESC,"[7m",0     ; Start standout mode - reverse
+SE:	DB	ESC,"[m",0      ; End standout mode - reverse
+TI:	DB	ESC,"[m",0      ; Terminal initialization (using SE:)
 TE:	DB	ESC,"[m",0      ; Terminal deinitialization (using SE:)
 ;
 ; Extensions to standard Z3TCAP

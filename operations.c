@@ -159,12 +159,14 @@ void load_directory( Panel *p ) {
         *( p->files[ 0 ].cpmname ) = '\0';
         return;
     }
+    // Reset DMA to default!
+    bdos( CPM_SDMA, DEF_DMA );
 
     if ( p->drive == '@' ) // '@' -> select current drive
-        p->drive = bdos( 25, fcb_src ) + 'A';
+        p->drive = bdos( CPM_IDRV, fcb_src ) + 'A';
 
     /* 1. change drive to fetch the complete directory */
-    result = bdos( 14, p->drive - 'A' );
+    result = bdos( CPM_LGIN, p->drive - 'A' );
 
     if ( result ) {
         p->drive = '?';
@@ -173,10 +175,9 @@ void load_directory( Panel *p ) {
 
     /* 2. Prepare FCB to match all files (*.*) and all extents */
     memset( fcb_src, 0, sizeof( fcb_src ) );
-    fcb_src[ 0 ] = 0;                     // current drive
     memset( &fcb_src[ 1 ], '?', 11 + 4 ); // name, type, EXTENT,S1,S2,RC: "????????.???"????
     /* 3. Find 1st file */
-    result = bdos( 17, fcb_src ); // BDOS function 17 (F_SFIRST) - search for first
+    result = bdos( CPM_FFST, fcb_src ); // BDOS function 17 (F_SFIRST) - search for first
 
     while ( result != 255 && count < MAX_FILES ) { // OK: result = 0..3
         /* record is in default DMA (0x80) */
@@ -229,7 +230,7 @@ void load_directory( Panel *p ) {
         }
 
         /* find all other files */
-        result = bdos( 18, fcb_src ); // BDOS function 18 (F_SNEXT) - search for next
+        result = bdos( CPM_FNXT, fcb_src ); // BDOS function 18 (F_SNEXT) - search for next
     }
 
     // sort file names and extents,
@@ -282,7 +283,7 @@ static int8_t delete_active_file() {
     if ( p->num_files == 0 )
         return -1;
     prepare_fcb( p->files[ p->current_idx ].cpmname, p, NULL );
-    return bdos( 19, fcb_src ); // BDOS function 19 (F_DELETE) - delete file
+    return bdos( CPM_DEL, fcb_src ); // BDOS function 19 (F_DELETE) - delete file
 }
 
 
@@ -304,19 +305,22 @@ void view_file() {
     gotoxy( 1 << 8 | 1 ); // home
     curoff();
 
+    // Reset DMA to default!
+    bdos( CPM_SDMA, DEF_DMA );
+
     prepare_fcb( name, p, NULL );
     // open and read
-    if ( bdos( 15, fcb_src ) != 255 ) {      // BDOS function 15 - (F_OPEN) - Open file
-        while ( bdos( 20, fcb_src ) == 0 ) { // BDOS function 20 (F_READ) - read next record
+    if ( bdos( CPM_OPN, fcb_src ) != 255 ) {       // BDOS function 15 - (F_OPEN) - Open file
+        while ( bdos( CPM_READ, fcb_src ) == 0 ) { // BDOS function 20 (F_READ) - read next record
             for ( i = 0; i < 128; i++ ) {
                 char c = *( (char *)( DEF_DMA + i ) );
                 if ( c == 0x1A )
                     goto end_of_file; // EOF (Ctrl+Z)
                 putchar( c );
                 if ( c == '\n' ) {
-                    putchar( '\r' ); // Retorno de carro para CP/M
+                    putchar( '\r' ); // CR for terminal
                     line_count++;
-                    // Pausa cuando se llena la pantalla (aprox VISIBLE_ROWS líneas)
+                    // wait after one screen page
                     if ( line_count >= PANEL_HEIGHT ) {
                         more( "VIEW", name );
                         if ( wait_key_hw() == ESC )
@@ -354,10 +358,13 @@ void dump_file() {
     gotoxy( 1 << 8 | 1 ); // home
     curoff();
 
+    // Reset DMA to default!
+    bdos( CPM_SDMA, DEF_DMA );
+
     prepare_fcb( p->files[ p->current_idx ].cpmname, p, NULL );
 
-    if ( bdos( 15, fcb_src ) != 255 ) {      // BDOS function 15 - (F_OPEN) - Open file
-        while ( bdos( 20, fcb_src ) == 0 ) { // BDOS function 20 (F_READ) - read next record
+    if ( bdos( CPM_OPN, fcb_src ) != 255 ) {       // BDOS function 15 - (F_OPEN) - Open file
+        while ( bdos( CPM_READ, fcb_src ) == 0 ) { // BDOS function 20 (F_READ) - read next record
             for ( i = 0; i < 128; i += 16 ) {
                 printf( "%04X  ", (unsigned int)address );
                 for ( j = 0; j < 16; j++ ) {
@@ -402,20 +409,16 @@ esc_file:
 
 // copy a specific file by its name using asm function
 static int16_t copy_file_by_name( Panel *src, Panel *dst, const char *name ) {
-    int16_t rc = -1;
+    int16_t rc = 0;
     prepare_fcb( name, src, dst );
-
     if ( DEBUG ) {
         gotoxy( DEBUG_ROW << 8 | 1 );
         ereol();
         printf( "copy: %s %s ", fcb_src + 1, fcb_dst + 1 );
     }
-
     rc = cpsrcdst();
-
     if ( DEBUG )
         printf( " status: %u", rc );
-
     return rc;
 }
 
@@ -436,17 +439,22 @@ static void exec_multi_copy( Panel *src, Panel *dst ) {
         printf( "copy" );
     }
 
-    for ( i = 0; i < src->num_files; i++ ) {
+    for ( i = 0; i < src->num_files; i++ )
         if ( src->files[ i ].attrib & B_SEL )
             ++marked;
-    }
-
     if ( marked == 0 ) {
         gotoxy( STATUS_ROW << 8 | 1 );
         ereol();
         printf( " Copying: %s", src->files[ src->current_idx ].cpmname );
         rc = copy_file_by_name( src, dst, src->files[ src->current_idx ].cpmname );
     } else {
+        // clear dialog box and ask
+        gotoxy( STATUS_ROW << 8 | 1 );
+        ereol();
+        printf( " COPY SELECTED FILE(S) TO %c:? (Y/N) ", dst->drive );
+        if ( !yes_no() )
+            return;
+
         for ( i = 0; i < src->num_files; i++ ) {
             if ( src->files[ i ].attrib & B_SEL ) {
                 done++;
@@ -462,7 +470,6 @@ static void exec_multi_copy( Panel *src, Panel *dst ) {
             }
         }
     }
-
     if ( rc ) {
         if ( 1 == rc )
             printf( " - directory full" );
@@ -474,16 +481,20 @@ static void exec_multi_copy( Panel *src, Panel *dst ) {
             printf( " - error %d", rc );
         printf( " (press any key)" );
         wait_key_hw();
-        bdos( 37, 1 << ( dst->drive - 'A' ) ); // DRV_RESET - Selectively reset disc drives
+        bdos( CPM_SRDS, 1 << ( dst->drive - 'A' ) ); // DRV_RESET - Selectively reset disc drives
     }
-
-    load_directory( dst );
     // the refresh will be done by main.c after calling this function.
 }
 
 
 static void exec_multi_delete( Panel *p ) {
     int i, marked = 0, done = 0;
+    // clear dialog box and ask
+    gotoxy( STATUS_ROW << 8 | 1 );
+    ereol();
+    printf( " DELETE SELECTED FILE(S)? (Y/N) " );
+    if ( !yes_no() )
+        return;
     // count number of selections
     for ( i = 0; i < p->num_files; i++ ) {
         if ( p->files[ i ].attrib & B_SEL )
@@ -504,14 +515,12 @@ static void exec_multi_delete( Panel *p ) {
                 ereol();
                 printf( " [%d/%d] Deleting: %s ", done, marked, p->files[ i ].cpmname );
                 prepare_fcb( p->files[ i ].cpmname, p, NULL );
-                bdos( 19, fcb_src ); // BDOS function 19 (F_DELETE) - delete file
+                bdos( CPM_DEL, fcb_src ); // BDOS function 19 (F_DELETE) - delete file
                 p->files[ i ].attrib &= ~B_SEL;
             }
         }
     }
-    // clear dialog part
-    gotoxy( STATUS_ROW << 8 | 1 );
-    ereol();
+    // the refresh will be done by main.c after calling this function.
 }
 
 
@@ -519,46 +528,31 @@ void copy_cmd() {
     if ( !App.active_panel->num_files           // nothing to do
          || App.left.drive == App.right.drive ) // cannot copy to same drive
         return;
-    Panel *dest = ( App.active_panel == &App.left ) ? &App.right : &App.left;
-    // clear dialog box and ask
+    Panel *dst = ( App.active_panel == &App.left ) ? &App.right : &App.left;
+    exec_multi_copy( App.active_panel, dst );
+    load_directory( App.inactive_panel );
+    fill_panel( App.inactive_panel );
     gotoxy( STATUS_ROW << 8 | 1 );
-    ereol();
-    printf( " COPY SELECTED FILE(S) TO %c:? (Y/N) ", dest->drive );
-    if ( yes_no() ) {
-        // Y: copy multiple files
-        exec_multi_copy( App.active_panel, dest );
-        fill_panel( App.inactive_panel );
-    }
-    // clear status line
-    gotoxy( STATUS_ROW << 8 | 1 );
-    ereol();
+    ereol(); // clear status line
 }
 
 
 void delete_cmd() {
     if ( !App.active_panel->num_files ) // nothing to do
         return;
-    // clear dialog box and ask
-    gotoxy( STATUS_ROW << 8 | 1 );
-    ereol();
-    printf( " DELETE SELECTED FILE(S)? (Y/N) " );
-    if ( yes_no() ) {
-        // Y: call master function
-        exec_multi_delete( App.active_panel );
-        load_directory( App.active_panel );
-        fill_panel( App.active_panel );
-        // if left == right update both panels
-        if ( App.left.drive == App.right.drive ) {
-            if ( App.active_panel == &App.left )
-                copy_panel_content( &App.left, &App.right );
-            else
-                copy_panel_content( &App.right, &App.left );
-            fill_panel( App.inactive_panel );
-        }
+    exec_multi_delete( App.active_panel );
+    load_directory( App.active_panel );
+    fill_panel( App.active_panel );
+    // if left == right update both panels
+    if ( App.left.drive == App.right.drive ) {
+        if ( App.active_panel == &App.left )
+            copy_panel_content( &App.left, &App.right );
+        else
+            copy_panel_content( &App.right, &App.left );
+        fill_panel( App.inactive_panel );
     }
-    // clear status line
     gotoxy( STATUS_ROW << 8 | 1 );
-    ereol();
+    ereol(); // clear status line
 }
 
 

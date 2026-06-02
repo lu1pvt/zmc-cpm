@@ -20,6 +20,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 #include <stdio.h>
 #include <string.h>
 
+#include "vlib.h"
 #include "zmc.h"
 
 static void putchar_xy( uint8_t col, uint8_t row, char c ) {
@@ -76,39 +77,52 @@ static void draw_file_info( Panel *p, int16_t f_idx ) {
 
 // draw the empty wire frame
 void draw_frame( Panel *p ) {
-    uint8_t i;
+    uint16_t i;
 
-    if ( &App.left == p )
-        gotoxy( 1 << 8 | 1 );
-    else
-        gotoxy( 1 << 8 | PANEL_WIDTH + 1 );
-    putchar( ' ' );
-    i = PANEL_WIDTH - 2;
-    while ( i-- )
-        putchar( '_' );
-    putchar( ' ' );
-    for ( i = 0; i < VISIBLE_ROWS; i++ ) {
-        int16_t f_idx = i + p->top_idx;
-        if ( &App.left == p ) {
-            putchar_xy( PANEL_WIDTH, i + 2, '|' );
-            gotoxy( ( i + 2 ) << 8 | PANEL_WIDTH - 1 );
-            // clr_line_left();
-            putchar_xy( 1, i + 2, '|' );
-        } else {
-            putchar_xy( PANEL_WIDTH + 1, i + 2, '|' );
-            ereol();
-            putchar_xy( 2 * PANEL_WIDTH, i + 2, '|' );
+    // B2 = 1 if Graphics On/Off present, 0 if absent
+    // B3 = 1 if 13 Graphics chars exist, 0 if any absent
+    if ( ( VLIB_STATUS & 0b1100 ) == 0b1100 ) { // draw graphic box
+        grxon();
+        if ( &App.left == p )
+            gbox( 0x0101, PANEL_WIDTH << 8 | PANEL_HEIGHT );
+        else
+            gbox( 0x100 | (PANEL_WIDTH + 1), PANEL_WIDTH << 8 | PANEL_HEIGHT );
+        grxoff();
+    } else { // use ASCII char for box
+        if ( &App.left == p )
+            gotoxy( 1 << 8 | 1 );
+        else
+            gotoxy( 1 << 8 | PANEL_WIDTH + 1 );
+        // top margin
+        putchar( ' ' );
+        i = PANEL_WIDTH - 2;
+        while ( i-- )
+            putchar( '_' );
+        putchar( ' ' );
+        // left and right margin
+        for ( i = 0; i < VISIBLE_ROWS; i++ ) {
+            int16_t f_idx = i + p->top_idx;
+            if ( &App.left == p ) {
+                putchar_xy( PANEL_WIDTH, i + 2, '|' );
+                gotoxy( ( i + 2 ) << 8 | PANEL_WIDTH - 1 );
+                putchar_xy( 1, i + 2, '|' );
+            } else {
+                putchar_xy( PANEL_WIDTH + 1, i + 2, '|' );
+                // ereol();
+                putchar_xy( 2 * PANEL_WIDTH, i + 2, '|' );
+            }
         }
+        // bottom margin
+        if ( &App.left == p )
+            gotoxy( PANEL_HEIGHT << 8 | 1 );
+        else
+            gotoxy( PANEL_HEIGHT << 8 | PANEL_WIDTH + 1 );
+        i = PANEL_WIDTH - 2;
+        putchar( '|' );
+        while ( i-- )
+            putchar( '_' );
+        putchar( '|' );
     }
-    if ( &App.left == p )
-        gotoxy( PANEL_HEIGHT << 8 | 1 );
-    else
-        gotoxy( PANEL_HEIGHT << 8 | PANEL_WIDTH + 1 );
-    i = PANEL_WIDTH - 2;
-    putchar( '|' );
-    while ( i-- )
-        putchar( '_' );
-    putchar( '|' );
 }
 
 
@@ -162,11 +176,23 @@ static void print_cpm_attrib( uint8_t *ca ) {
 void draw_header( Panel *p ) {
     uint8_t x_offset = p == &App.left ? 3 : PANEL_WIDTH + 3;
     gotoxy( 1 << 8 | x_offset );
-    if ( p == App.active_panel )
-        stndout();
-    printf( "[ DISK %c: ]", p->drive );
-    if ( p == App.active_panel )
-        stndend();
+    if ( ( VLIB_STATUS & 0b1100 ) == 0b1100 ) {
+        grxon();
+        rtisec();
+        if ( p == App.active_panel )
+            stndout();
+        printf( " DISK %c: ", p->drive );
+        if ( p == App.active_panel )
+            stndend();
+        ltisec();
+        grxoff();
+    } else {
+        if ( p == App.active_panel )
+            stndout();
+        printf( "[ DISK %c: ]", p->drive );
+        if ( p == App.active_panel )
+            stndend();
+    }
 }
 
 
@@ -179,13 +205,13 @@ void draw_footer( void ) {
     } else if ( PANEL_WIDTH >= 30 ) {
         printf( "A:-P:|TAB:Sw|F1:Help|F3:View|F4:Dump|F5:Copy|F8:Del|F10:Exit" );
     }
+    stndend();
 }
 
 
 // cmd line with active drive
 void show_prompt() {
     gotoxy( STATUS_ROW << 8 | 1 );
-    stndend();
     printf( "%c> %s", App.active_panel->drive, cmdline );
     ereol();
     curon();
@@ -208,13 +234,13 @@ void refresh_ui( uint8_t which_panel ) {
     draw_footer();
 }
 
+
 void change_focus() {
     Panel *tmp = App.active_panel;
     App.active_panel = App.inactive_panel;
     App.inactive_panel = tmp;
     draw_header( &App.left );
     draw_header( &App.right );
-
     // chirurgical update: refresh only the lines with cursors
     draw_file_line( &App.left, App.left.current_idx );
     draw_file_line( &App.right, App.right.current_idx );
@@ -225,14 +251,11 @@ void select_file() {
     if ( !App.active_panel->num_files )
         return;
     int16_t idx = App.active_panel->current_idx;
-
     // A. invert the selection state in memory
     App.active_panel->files[ idx ].attrib ^= B_SEL;
-
     // B. redraw current line to show '*'
     // IMPORTANT: current_idx was not changed, line is drawn with cursor.
     draw_file_line( App.active_panel, idx );
-
     // C. move the cursor to the next line
     line_down();
 }

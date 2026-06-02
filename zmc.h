@@ -22,9 +22,16 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 #include "vlib.h"
 
+extern uint8_t INTENV;
+extern uint8_t INTCOLUMNS;
+extern uint8_t INTLINES;
+extern uint8_t INTLINES2;
+
 extern uint8_t COLUMNS;
 extern uint8_t LINES;
 extern uint8_t LINES2;
+
+extern uint8_t VLIB_STATUS;
 
 #define FILENAME_LEN 13
 #define SCREEN_HEIGHT ( LINES )
@@ -35,6 +42,7 @@ extern uint8_t LINES2;
 #define DEBUG_ROW ( SCREEN_HEIGHT + 1 )
 
 #define NUL 0x00
+#define CTRL_C 0x03
 #define BS 0x08
 #define TAB 0x09
 #define LF 0x0A
